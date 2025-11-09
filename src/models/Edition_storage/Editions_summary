@@ -1,0 +1,57 @@
+E9: 
+    Group Normalization 
+    Smaller stride 
+    Smaller kernel (25)
+    Amplitude scaling layer 
+    Residual connection 
+
+    Problems: 
+        Amplitude at the late cycles is still to big (good at the begining though)
+        It looks like the activation functions are to sharp with cutting negative values
+
+E10:
+    Elu instead of leakyRelu 
+
+    Problems:
+        Poor reconstruction for higher amplitudes 
+        Still some loss in negative amplitudes 
+
+E11:
+    Multiple kernels to capture different frequencies (up to [50 2])
+    Elu with learnable parameter
+
+    Problems:
+        Very long learning time
+        Poor reconstruction for higher frequencies 
+        Still a lot of amplitudes is incorrectly reconstructed
+    
+E12: 
+    Back to the idea of the signle kernel but smaller 
+    Elu still with learnable parameter
+
+    Problems:
+
+E_13 (Cluaude 4.5)
+    Progressive channel reduction 
+    Gradual downsampling 5→4→2→2 instead of 10→2→5→1
+    tanh removed 
+    no maxpooling
+    
+    Problems:
+    Constant prediction, a complete disaster 
+
+E_14
+    Residual connection between deconder and encoder removed 
+
+    Problemms: 
+    As expected the results were more noisy and poorly reasembled the inputs, although the two increase in amplitude ware visible 
+    There was less problems with amplitude 
+
+E_15
+    Reduction of the mean of every sample was added before the last convolution 
+    last ELU layer removed
+    zero bias imposed on the last transpose conv layer 
+
+    Problems:
+    Still very noisy reconstruction, but a bit better than for E_14 (maybe), for some paths very good
+    The order of magnitudes usually the same but prediced amplitudes are constantly samller 

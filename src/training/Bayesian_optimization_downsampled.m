@@ -39,36 +39,27 @@ dataCfg = struct( ...
     'envelope', false, ... % Whether to use envelope of signals or raw signals
     'train_files', [103 104], ...
     'val_files', [109 105], ...
-    'input_size', 4000, ... % Size of each input signal
+    'input_size', 800, ... % Size of each input signal
     'frequency', 1 ... % Frequency index to extract (only if you want to train single frequency)
     ); 
 
 %% Define Hyperparameters to Optimize
 
 % Architecture parameters
-kernel_size1 = optimizableVariable('kernel_size1', [8, 32], 'Type', 'integer');
-kernel_size2 = optimizableVariable('kernel_size2', [4, 16], 'Type', 'integer');
+kernel_size1 = optimizableVariable('kernel_size1', [10, 15], 'Type', 'integer');
+kernel_size2 = optimizableVariable('kernel_size2', [10, 15], 'Type', 'integer');
+kernel_size3 = optimizableVariable('kernel_size3', [10, 15], 'Type', 'integer');
 
-channels1 = optimizableVariable('channels1', [6, 12], 'Type', 'integer'); % 8 is number of samples in one sine of the higest freq 
-channels2 = optimizableVariable('channels2', [3, 8], 'Type', 'integer');
+channels1 = optimizableVariable('channels1', [5, 10], 'Type', 'integer'); % 8 is number of samples in one sine of the higest freq 
+channels2 = optimizableVariable('channels2', [15, 25], 'Type', 'integer');
 
-stride1 = optimizableVariable('stride1', [4, 20], 'Type', 'integer');  % Increased min to reduce latent size
+%stride1 = optimizableVariable('stride1', [4, 20], 'Type', 'integer');  % Increased min to reduce latent size
 
 dilation_factor = optimizableVariable('dilation_factor', [2, 8], 'Type', 'integer');  % New variable to control dilation
 
-kernel_size1 = optimizableVariable('kernel_size1', [5, 10], 'Type', 'integer');
-kernel_size2 = optimizableVariable('kernel_size2', [5, 10], 'Type', 'integer');
-kernel_size3 = optimizableVariable('kernel_size3', [5, 10], 'Type', 'integer');
-
-channels1 = optimizableVariable('channels1', [5, 10], 'Type', 'integer'); % 8 is number of samples in one sine of the higest freq 
-channels2 = optimizableVariable('channels2', [15,25], 'Type', 'integer');
-
-%stride1 = optimizableVariable('stride1', [2, 4], 'Type', 'integer');  % Increased min to reduce latent size
-
-dilation_factor = optimizableVariable('dilation_factor', [1, 4], 'Type', 'integer');  % New variable to control dilation
 function tf = stride_const(X)
     % Constraint for bayesopt. X is a table with one row per candidate.
-    input_size = 4000;
+    input_size = 800;
 
     stride1 = X.stride1;          % vector (nCandidates x 1)
     k1      = X.kernel_size1;     % vector (nCandidates x 1)
@@ -93,8 +84,8 @@ stride2 = optimizableVariable('stride2', [2, 6], 'Type', 'integer');
 %% Bayesian Optimization Settings
 
 % Combine all optimizable variables
-optimVars_full = [channels1, channels2, channels3,  ...
-             kernel_size1, kernel_size2, kernel_size3, stride1];
+% optimVars_full = [channels1, channels2, channels3,  ...
+%              kernel_size1, kernel_size2, kernel_size3, stride1];
 
 optimVars_compressed = [channels1, channels2,   ...
             kernel_size1, kernel_size2, kernel_size3, dilation_factor];
@@ -103,7 +94,7 @@ optimVars = optimVars_compressed;  % Use compressed version to enforce latent si
 
 % Bayesian optimization options
 bayesOpts = struct(...
-    'MaxObjectiveEvaluations', 10, ...  % Adjust based on your time budget
+    'MaxObjectiveEvaluations', 6, ...  % Adjust based on your time budget
     'MaxTime', 24*3600, ...              % 24 hours max
     'IsObjectiveDeterministic', false, ...
     'UseParallel', true, ...             % Use parallel if available
@@ -138,7 +129,7 @@ results = bayesopt(objectiveFcn, optimVars, ...
 
 %% Save Results
 
-outDir = fullfile(projectRoot,'results\magnified_states_optim\');
+outDir = fullfile(projectRoot,'results\downsampled_states_optim\');
 if ~exist(outDir,'dir'), mkdir(outDir); end
 finalFile = fullfile(outDir,'bayesian_optimization_results.mat');
 save(finalFile, 'results', '-v7.3');   % save once, not inside OutputFcn
@@ -187,9 +178,9 @@ if isfield(dataCfg, 'frequency')
     expectedName = sprintf('net_%d_%d_%d_%d_%d_%d_freq%d.mat', ...
         bestParams.channels1, bestParams.channels2, ...
         bestParams.kernel_size1, bestParams.kernel_size2, bestParams.kernel_size3, bestParams.dilation_factor, dataCfg.frequency);
-    dstName = sprintf('net_best_%d_%d_%d_%d_%d_%d.mat', ...
+    dstName = sprintf('net_best_%d_%d_%d_%d_%d_%d_freq%d.mat', ...
         bestParams.channels1, bestParams.channels2, ...
-        bestParams.kernel_size1, bestParams.kernel_size2, bestParams.kernel_size3, bestParams.dilation_factor);
+        bestParams.kernel_size1, bestParams.kernel_size2, bestParams.kernel_size3, bestParams.dilation_factor, dataCfg.frequency);
 else
     expectedName = sprintf('net_%d_%d_%d_%d_%d_%d.mat', ...
         bestParams.channels1, bestParams.channels2, ...
@@ -205,7 +196,6 @@ srcFile = fullfile(outDir, expectedName);
 dstFile = fullfile(outDir, dstName);
 movefile(srcFile, dstFile, 'f');
 fprintf('✅ Renamed best model to: %s\n', dstFile);
-
 
 %% (Optional) Train Final Model with Best Hyperparameters
 
@@ -249,11 +239,11 @@ function loss = trainAndEvaluateAE(params, dataCfg, varargin)
     % Create datastores
     % det_size helper defined as a nested function because MATLAB does not support inline if/elseif syntax inside anonymous functions.
     mkds = @(id) CyclemultiInputDatastore_separate(...
-        load(sprintf("data\\States_%d.mat", id)).States, ...
+        load(sprintf("data\\States_downsampled_%d.mat", id)).States_downsampled, ...
         dataCfg.num_in, dataCfg.b_size, dataCfg.overlap_size, det_size(id), dataCfg.envelope);
 
     mkds_sin_freq = @(id) CyclemultiInputDatastore_separate_sin_freq(...
-        load(sprintf("data\\States_%d.mat", id)).States, ...
+        load(sprintf("data\\States_downsampled_%d.mat", id)).States_downsampled, ...
         dataCfg.num_in, dataCfg.b_size, dataCfg.overlap_size, det_size(id), dataCfg.envelope, dataCfg.frequency);
 
     function out = det_size(id)
@@ -281,14 +271,13 @@ function loss = trainAndEvaluateAE(params, dataCfg, varargin)
         valData = combine(mkds(dataCfg.val_files(1)), mkds(dataCfg.val_files(2)), ReadOrder="sequential");
         single_freq = false;
     end
-    log('Datastores ready. Starting training...\n');
     % Train and evaluate autoencoder with given hyperparameters
     p = inputParser;
     addParameter(p, 'FinalTraining', false);
     parse(p, varargin{:});
     isFinal = p.Results.FinalTraining;
     
-    try       
+    try        
         % Pick device per worker: 1 GPU worker, others CPU
         t = getCurrentTask(); w = []; if ~isempty(t), w = t.ID; end
         log('1 am here before gpu');
@@ -299,9 +288,9 @@ function loss = trainAndEvaluateAE(params, dataCfg, varargin)
         disp('Building and training network with parameters:');
         % Build network with current parameters
         if single_freq
-            net = architectures_container.buildOptimizedNetwork_compressed_sin_freq(params);
+            net = architectures_container.buildOptimizedNetwork_compressed_downsampled_sin_freq(params);
         else
-            net = architectures_container.buildOptimizedNetwork_compressed(params);
+            net = architectures_container.buildOptimizedNetwork_compressed_downsampled(params);
         end 
         % Training options
         if isFinal
@@ -328,9 +317,9 @@ function loss = trainAndEvaluateAE(params, dataCfg, varargin)
         % Train network
         [net, info] = trainnet(trainData, net, lossFn, options);
         if single_freq
-            save(fullfile('results\magnified_states_optim\',sprintf('net_%d_%d_%d_%d_%d_%d_freq%d.mat', params.channels1, params.channels2, params.kernel_size1, params.kernel_size2, params.kernel_size3, params.dilation_factor, dataCfg.frequency)), 'net','-v7.3');
+            save(fullfile('results\downsampled_states_optim\',sprintf('net_%d_%d_%d_%d_%d_%d_freq%d.mat', params.channels1, params.channels2, params.kernel_size1, params.kernel_size2, params.kernel_size3, params.dilation_factor, dataCfg.frequency)), 'net','-v7.3');
         else
-            save(fullfile('results\magnified_states_optim\',sprintf('net_%d_%d_%d_%d_%d_%d.mat', params.channels1, params.channels2, params.kernel_size1, params.kernel_size2, params.kernel_size3, params.dilation_factor)), 'net','-v7.3');
+            save(fullfile('results\downsampled_states_optim\',sprintf('net_%d_%d_%d_%d_%d_%d.mat', params.channels1, params.channels2, params.kernel_size1, params.kernel_size2, params.kernel_size3, params.dilation_factor)), 'net','-v7.3');
         end
         valLoss = min(info.ValidationHistory.Loss);
         clear net info;  % Free up memory
@@ -372,7 +361,7 @@ function stop = boCheckpointFn(boResults, state)
 stop = false;
 if ~strcmp(state,'iteration'), return; end
 try
-    outDir = fullfile(pwd,'results\magnified_states_optim\');
+    outDir = fullfile(pwd,'results\downsampled_states_optim\');
     if ~exist(outDir,'dir'), mkdir(outDir); end
 
     payload.iteration      = boResults.NumObjectiveEvaluations;

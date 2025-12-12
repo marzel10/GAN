@@ -1,5 +1,5 @@
 tic;
-panel = 109;
+panel = 105;
 
 % Panel-specific configuration (set once at the beginning)
 if panel == 103
@@ -36,51 +36,97 @@ else
     error('Panel %d not configured. Please add configuration for this panel.', panel);
 end
 
-cd(workingDir);
+cd(workingDir); % Going to the directory where panel's data is stored
 f = [50, 100, 125, 150, 200, 250];
 %f = [50, 100]
 
-Amplitude_joinced = struct();
+% Initialize structures to hold joined data
+Amplitude_joined = struct();
 Time_joined = struct();
-Banchmark_joined = struct();
+Benchmark_joined = struct();
 numReceiver = 8;
 
 % Generate all unique pairs
 SP = nchoosek(1:numReceiver, 2);
 numbering = 1:size(SP,1);
 SP = cat(2,SP,numbering');
+% Convert SP to a table with named columns and save
+try
+    SP_table = array2table(SP, 'VariableNames', {'Sensor1_idx','Sensor2_idx','PairIdx'});
+    fprintf('SP size: %s, class(SP): %s\n', mat2str(size(SP)), class(SP));
+    if exist('debugDataFlow','file') == 2
+        debugDataFlow('SP_table', SP_table);
+    end
+    save('C:/Users/Maria/Documents/Honours Programme/Networks/GAN/data/SP.mat','SP','SP_table','-v7.3');
+    fprintf('Saved SP and SP_table to SP.mat\n');
+catch ME
+    fprintf('Error saving SP table: %s\n', ME.message);
+    rethrow(ME);
+end
 
 A = repmat(1:8, 8, 1);
-mask = A ~= (1:8)';      % logical mask where element ≠ row index
-A_new = flipud(reshape(A(mask), 8, 7));
-
+mask = A ~= (1:8)';      % logical mask where element ≠ row index, to remove self connections
+% Creating matrix which in each row stores the receiver numbers connected to that actuator (act 1 sends to rec in row 1, etc)
+A_new = flipud(reshape(A(mask), 8, 7)); % reshape and flip up side down to get desired format
 
 % Example sizes (now automatically set based on panel)
 numFreq     = length(f);
 numpairs    = size(SP,1);
-% numReceiver = 8;
-% numTrans    = 8;
 
-% Predefine the base struct for S2
+% Predefine the base struct for one pair data
 PairTemplate = struct( ...
     'Amplitude', [], ...
     'Time', [], ...
-    'Banchmark_Amplitude', [] );
+    'Benchmark_Amplitude', [] );
 
 % Wrap inside Frequency
 FreqTemplate = struct('Pair_idx', repmat(PairTemplate, 1, numpairs));
 
-% Wrap inside Cycle1
-Cycle1 = repmat(struct('Frequency', repmat(FreqTemplate, 1, numFreq)), 1, numStates);
+% Wrap inside State
+StateTemplate = struct('Frequency', repmat(FreqTemplate, 1, numFreq));
+
+% Preallocate the full structure array
+States = repmat(StateTemplate, 1, numStates);
+States_lowpass = repmat(StateTemplate, 1, numStates);
+States_downsampled = repmat(StateTemplate, 1, numStates);
 
 disp('My current working directory is:');
 disp(pwd);
-for state = 1:numStates
+%Check if saving directory exists
+saveDir = 'C:/Users/Maria/Documents/Honours Programme/Networks/GAN/data/';
+if ~isfolder(saveDir)
+    disp("Saving directory does not exist. Creating now...");
+    mkdir(saveDir);
+    disp(['Created directory: ', saveDir]);
+end
+
+one_state_loadings = numFreq * numpairs * 10; % number of loadings per state (frequencies * pairs * repetitions)
+total_loadings = numStates * one_state_loadings;
+delete(gcp('nocreate'));
+p = gcp('nocreate');
+if isempty(p)
+    c = parcluster;                   % current default cluster
+    disp(c.Profile);
+    desired = 14;
+    c.NumWorkers = min(desired, feature('numcores'));
+    
+    % Persist the change to the profile and start a pool
+    saveProfile(c);
+    parpool(c, c.NumWorkers);
+else
+    fprintf('Pool has %d workers\n', p.NumWorkers);
+end
+disp(feature('numcores'))
+input('Press enter')
+parfor state = 1:numStates
+    counter = 0;
+    disp(['Processing State: ', num2str(state)]);
     for freq_idx = 1:length(f)
-        %for receiver = 1:numReceiver
+            disp(['  Processing Frequency: ', num2str(f(freq_idx)), ' kHz']);
             for rep = 1:10
-                %for trans = 1:numTrans
                     for pair = 1:size(SP,1)
+                        fprintf('%d/%d (%.1f) loadings inside State %d \n', counter, one_state_loadings, (counter/one_state_loadings)*100, state);
+                        counter = counter + 1;
                         r1 = SP(pair,1);
                         r2 = SP(pair,2);
                         idx_t1 = find(A_new(r1,:) == r2);
@@ -92,21 +138,22 @@ for state = 1:numStates
     
                         % Step 1: Find the matching folder that starts with "State_<state>"
                         stateFolders = dir(fullfile(baseDir, ['State_', full_state, '*']));
-                        disp(fullfile(baseDir, ['State_', full_state, '*']))
+                        
                         if isempty(stateFolders)
                             error('No folder found for State_%d', state);
                         end
                         
                         %{
                         if isempty(stateFolders1)
-                            error('No banchmark folder found for State_1');
+                            error('No Benchmark folder found for State_1');
                         end
                         %}
-                        % Pick the first matching folder (or loop through them if needed)
+                        % Pick the first matching folder (it should be unique)
                         stateFolder = stateFolders(1).name;
                        
     
                         % Step 2: Build full file path using that folder
+                        % Normal data sent by actuator r1 to receiver r2
                         directory1 = fullfile(...
                             baseDir, ...
                             stateFolder, ...
@@ -114,6 +161,7 @@ for state = 1:numStates
                             sprintf('Actionneur%d', r1), ...
                             sprintf('measured_data_rep_%d.mat', rep) ...
                         );
+                        % Benchmark data sent by actuator r1 to receiver r2
                         directoryb1 = fullfile(...
                             baseDir1, ...
                             stateFolder1, ...
@@ -121,7 +169,7 @@ for state = 1:numStates
                             sprintf('Actionneur%d', r1), ...
                             sprintf('measured_data_rep_%d.mat', rep) ...
                         );
-    
+                        % Normal data sent by actuator r2 to receiver r1
                         directory2 = fullfile(...
                             baseDir, ...
                             stateFolder, ...
@@ -129,7 +177,7 @@ for state = 1:numStates
                             sprintf('Actionneur%d', r2), ...
                             sprintf('measured_data_rep_%d.mat', rep) ...
                         );
-    
+                        % Benchmark data sent by actuator r2 to receiver r1
                         directoryb2 = fullfile(...
                             baseDir1, ...
                             stateFolder1, ...
@@ -141,12 +189,11 @@ for state = 1:numStates
                         % Step 3: Load the data
                         if isfile(directoryb1)
                             datab1 = load(directoryb1);
-                            disp('✅ Banchmark 1 Data loaded');
+                            disp('✅ Benchmark 1 Data loaded');
                         else
-                            error('❌ Banchmark 1 File not found: %s', directoryb1)
+                            error('❌ Benchmark 1 File not found: %s', directoryb1)
                         end
     
-                        % Step 3: Load the data
                         if isfile(directory1)
                             data1 = load(directory1);
                             disp('✅ Data 1 loaded');
@@ -154,50 +201,106 @@ for state = 1:numStates
                             error('❌ File 1 not found: %s', directory1)
                         end
     
-                        % Step 3: Load the data
                         if isfile(directoryb2)
                             datab2 = load(directoryb2);
-                            disp('✅ Banchmark 2 Data loaded');
+                            disp('✅ Benchmark 2 Data loaded');
                         else
-                            error('❌ Banchmark 2 File not found: %s', directoryb2)
+                            error('❌ Benchmark 2 File not found: %s', directoryb2)
                         end
     
-                        % Step 3: Load the data
                         if isfile(directory2)
                             data2 = load(directory2);
                             disp('✅ Data 2 loaded');
                         else
                             error('❌ File 2 not found: %s', directory2)
                         end
-                        
-                        
-                      Amplitude_joined = cat(1,data1.Time_Response(:, idx_t1+2)/10, data2.Time_Response(:, idx_t2+2)/10);
-                      Time_joined = cat(1, data1.Time_Response(:, 1)/10, data2.Time_Response(:, 1)/10);
-                      Banchmark_joined = cat(1, datab1.Time_Response(:, idx_t2+2)/10, datab2.Time_Response(:, idx_t2+2)/10);
+                           
+                        Amplitude_joined = cat(1,data1.Time_Response(:, idx_t1+2)/10*1000, data2.Time_Response(:, idx_t2+2)/10*1000); % in mV
+                        Time_joined = cat(1, data1.Time_Response(:, 1)/10, data2.Time_Response(:, 1)/10);
+                        Benchmark_joined = cat(1, datab1.Time_Response(:, idx_t1+2)/10*1000, datab2.Time_Response(:, idx_t2+2)/10*1000); % in mV
 
-                        if isempty(Cycle1(state).Frequency(freq_idx).Pair_idx(pair).Amplitude)
-                            % Cycle1(state).Frequency(freq_idx).S1(receiver).S2(trans).Amplitude = data1.Time_Response(:, trans+1)/10
-                            % Cycle1(state).Frequency(freq_idx).S1(receiver).S2(trans).Time = data1.Time_Response(:, 1)/10
-                            % Cycle1(state).Frequency(freq_idx).S1(receiver).S2(trans).Banchmark_Amplitude = datab1.Time_Response(:, trans+1)/10
-                            Cycle1(state).Frequency(freq_idx).Pair_idx(pair).Time = Time_joined;
-                            Cycle1(state).Frequency(freq_idx).Pair_idx(pair).Amplitude = Amplitude_joined;
-                            Cycle1(state).Frequency(freq_idx).Pair_idx(pair).Banchmark_Amplitude = Banchmark_joined;
+                        % Prepare to downsampling 
+                        samp_rate = 2*10^6; % 2 MHz
+                        Nyquist_freq = samp_rate/2;
+                        Nyquist_freq_downsampled = Nyquist_freq/5; % After downsampling by 5, new Nyquist frequency
+
+                        % Remove frequencies above Nyquist frequency (without downsampling)
+                        Amplitude_lowpass = lowpass(Amplitude_joined, 0.99*Nyquist_freq, samp_rate);
+                        Benchmark_lowpass = lowpass(Benchmark_joined, 0.99*Nyquist_freq, samp_rate);
+
+                        % Remove frequencies above new Nyquist frequency (with downsampling)
+                        Amplitude_lowpass_downsampled = lowpass(Amplitude_joined, 0.99*Nyquist_freq_downsampled, samp_rate);
+                        Benchmark_lowpass_downsampled = lowpass(Benchmark_joined, 0.99*Nyquist_freq_downsampled, samp_rate);
+                        % Downsample by 5
+                        Amplitude_downsampled = downsample(Amplitude_lowpass_downsampled, 5);
+                        Benchmark_downsampled = downsample(Benchmark_lowpass_downsampled, 5);
+                        Time_downsampled = downsample(Time_joined, 5);
+
+                        if isempty(States(state).Frequency(freq_idx).Pair_idx(pair).Amplitude) % First time assignment
+                            States(state).Frequency(freq_idx).Pair_idx(pair).Time = Time_joined;
+                            States(state).Frequency(freq_idx).Pair_idx(pair).Amplitude = Amplitude_joined;
+                            States(state).Frequency(freq_idx).Pair_idx(pair).Benchmark_Amplitude = Benchmark_joined;
+
+                            States_lowpass(state).Frequency(freq_idx).Pair_idx(pair).Time = Time_joined;
+                            States_lowpass(state).Frequency(freq_idx).Pair_idx(pair).Amplitude = Amplitude_lowpass;
+                            States_lowpass(state).Frequency(freq_idx).Pair_idx(pair).Benchmark_Amplitude = Benchmark_lowpass;
+
+                            States_downsampled(state).Frequency(freq_idx).Pair_idx(pair).Time = Time_downsampled;
+                            States_downsampled(state).Frequency(freq_idx).Pair_idx(pair).Amplitude = Amplitude_downsampled;
+                            States_downsampled(state).Frequency(freq_idx).Pair_idx(pair).Benchmark_Amplitude = Benchmark_downsampled;
                         else
-    
-                            Cycle1(state).Frequency(freq_idx).Pair_idx(pair).Amplitude = Cycle1(state).Frequency(freq_idx).Pair_idx(pair).Amplitude + Amplitude_joined;
-                            Cycle1(state).Frequency(freq_idx).Pair_idx(pair).Time = Cycle1(state).Frequency(freq_idx).Pair_idx(pair).Time + Time_joined;
-                            Cycle1(state).Frequency(freq_idx).Pair_idx(pair).Banchmark_Amplitude = Cycle1(state).Frequency(freq_idx).Pair_idx(pair).Banchmark_Amplitude + Banchmark_joined;
+                            States(state).Frequency(freq_idx).Pair_idx(pair).Amplitude = States(state).Frequency(freq_idx).Pair_idx(pair).Amplitude + Amplitude_joined;
+                            States(state).Frequency(freq_idx).Pair_idx(pair).Time = States(state).Frequency(freq_idx).Pair_idx(pair).Time + Time_joined;
+                            States(state).Frequency(freq_idx).Pair_idx(pair).Benchmark_Amplitude = States(state).Frequency(freq_idx).Pair_idx(pair).Benchmark_Amplitude + Benchmark_joined;
+
+                            States_lowpass(state).Frequency(freq_idx).Pair_idx(pair).Amplitude = States_lowpass(state).Frequency(freq_idx).Pair_idx(pair).Amplitude + Amplitude_lowpass;
+                            States_lowpass(state).Frequency(freq_idx).Pair_idx(pair).Time = States_lowpass(state).Frequency(freq_idx).Pair_idx(pair).Time + Time_joined;
+                            States_lowpass(state).Frequency(freq_idx).Pair_idx(pair).Benchmark_Amplitude = States_lowpass(state).Frequency(freq_idx).Pair_idx(pair).Benchmark_Amplitude + Benchmark_lowpass;
+                            
+                            States_downsampled(state).Frequency(freq_idx).Pair_idx(pair).Amplitude = States_downsampled(state).Frequency(freq_idx).Pair_idx(pair).Amplitude + Amplitude_downsampled;
+                            States_downsampled(state).Frequency(freq_idx).Pair_idx(pair).Time = States_downsampled(state).Frequency(freq_idx).Pair_idx(pair).Time + Time_downsampled;
+                            States_downsampled(state).Frequency(freq_idx).Pair_idx(pair).Benchmark_Amplitude = States_downsampled(state).Frequency(freq_idx).Pair_idx(pair).Benchmark_Amplitude + Benchmark_downsampled;
                         end
+
+                        if rep == 10
+                            % Standarize over amplitude 
+                            m = mean(States(state).Frequency(freq_idx).Pair_idx(pair).Amplitude, 'all');
+                            std_dev = std(States(state).Frequency(freq_idx).Pair_idx(pair).Amplitude, 0, 'all');
+                            States(state).Frequency(freq_idx).Pair_idx(pair).Amplitude = (States(state).Frequency(freq_idx).Pair_idx(pair).Amplitude - m)/ std_dev;
+                            % Standarize over benchmark amplitude
+                            m_b = mean(States(state).Frequency(freq_idx).Pair_idx(pair).Benchmark_Amplitude, 'all');
+                            std_dev_b = std(States(state).Frequency(freq_idx).Pair_idx(pair).Benchmark_Amplitude, 0, 'all');
+                            States(state).Frequency(freq_idx).Pair_idx(pair).Benchmark_Amplitude = (States(state).Frequency(freq_idx).Pair_idx(pair).Benchmark_Amplitude - m_b)/ std_dev_b;
+                        
+                            % Lowpass standarization
+                            m_low = mean(States_lowpass(state).Frequency(freq_idx).Pair_idx(pair).Amplitude, 'all');
+                            std_dev_low = std(States_lowpass(state).Frequency(freq_idx).Pair_idx(pair).Amplitude, 0, 'all');
+                            States_lowpass(state).Frequency(freq_idx).Pair_idx(pair).Amplitude = (States_lowpass(state).Frequency(freq_idx).Pair_idx(pair).Amplitude - m_low)/ std_dev_low;
+                            % Standarize over benchmark amplitude
+                            m_b_low = mean(States_lowpass(state).Frequency(freq_idx).Pair_idx(pair).Benchmark_Amplitude, 'all');
+                            std_dev_b_low = std(States_lowpass(state).Frequency(freq_idx).Pair_idx(pair).Benchmark_Amplitude, 0, 'all');
+                            States_lowpass(state).Frequency(freq_idx).Pair_idx(pair).Benchmark_Amplitude = (States_lowpass(state).Frequency(freq_idx).Pair_idx(pair).Benchmark_Amplitude - m_b_low)/ std_dev_b_low;
+
+                            % Downsampled standarization
+                            m_down = mean(States_downsampled(state).Frequency(freq_idx).Pair_idx(pair).Amplitude, 'all');
+                            std_dev_down = std(States_downsampled(state).Frequency(freq_idx).Pair_idx(pair).Amplitude, 0, 'all');
+                            States_downsampled(state).Frequency(freq_idx).Pair_idx(pair).Amplitude = (States_downsampled(state).Frequency(freq_idx).Pair_idx(pair).Amplitude - m_down)/ std_dev_down;
+                            % Standarize over benchmark amplitude
+                            m_b_down = mean(States_downsampled(state).Frequency(freq_idx).Pair_idx(pair).Benchmark_Amplitude, 'all');
+                            std_dev_b_down = std(States_downsampled(state).Frequency(freq_idx).Pair_idx(pair).Benchmark_Amplitude, 0, 'all');
+                            States_downsampled(state).Frequency(freq_idx).Pair_idx(pair).Benchmark_Amplitude = (States_downsampled(state).Frequency(freq_idx).Pair_idx(pair).Benchmark_Amplitude - m_b_down)/ std_dev_b_down;
+                        end
+
                     end
-               % end
             end
-        %end
     end
 end
 
 
-save(sprintf('C:/Users/Maria/Documents/Honours Programme/PZT_data/PZT_L103/GAN/data/Cycle_%d.mat', panel),'Cycle1');
+save(fullfile(saveDir, sprintf('States_%d.mat', panel)),'States');
+save(fullfile(saveDir, sprintf('States_lowpass_%d.mat', panel)),'States_lowpass');
+save(fullfile(saveDir, sprintf('States_downsampled_%d.mat', panel)),'States_downsampled');
 
 end_time = toc;
-fprintf('Data struct created in %.2f seconds.\n', end_time);
+fprintf('Data structs created in %.2f seconds.\n', end_time);
 

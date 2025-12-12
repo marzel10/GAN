@@ -147,7 +147,7 @@ classdef CyclemultiInputDatastore_separate < matlab.io.Datastore & ...
 
                 for f = 1:numFreq
                     amp   = cycleStruct.Frequency(f).Pair_idx(p).Amplitude;
-                    bench = cycleStruct.Frequency(f).Pair_idx(p).Banchmark_Amplitude;
+                    bench = cycleStruct.Frequency(f).Pair_idx(p).Benchmark_Amplitude;
                     if ds.envelope
                         % amp = abs(hilbert(amp));
                         % bench = abs(hilbert(bench));
@@ -155,8 +155,8 @@ classdef CyclemultiInputDatastore_separate < matlab.io.Datastore & ...
                         [bench, ~] = envelope(bench);
                     
                     end
-                    pairData(:, 1, f) = amp;
-                    pairData(:, 2, f) = bench;
+                    pairData(:, 1, f) = single(amp);
+                    pairData(:, 2, f) = single(bench);
                 end
 
                 inputsCell{p} = pairData;

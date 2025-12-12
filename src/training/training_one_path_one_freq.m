@@ -9,7 +9,7 @@ cd(projectRoot);
 fprintf('Changed MATLAB working directory to: %s\n', pwd);
 
 % Remove any conflicting paths from old PZT folder (to avoid conflicts)
-if contains(path, 'C:\Users\Maria\Documents\Honours Programme\PZT')
+if contains(matlabpath, 'C:\Users\Maria\Documents\Honours Programme\PZT')
     rmpath('C:\Users\Maria\Documents\Honours Programme\PZT');
     fprintf('🗑️  Removed old PZT folder from path to avoid conflicts\n');
 end
@@ -208,6 +208,8 @@ function L = multiOutputMSE(varargin)
 end
 
 % Custom composite loss (L1 + transient weight)
+
+
 function L = mse_l1_loss(varargin)
     numOut = numel(varargin)/2;
     accum = 0;
@@ -216,10 +218,49 @@ function L = mse_l1_loss(varargin)
         Tk = varargin{1,k+numOut};
         if iscell(Yk), Yk=Yk{1}; end
         if iscell(Tk), Tk=Tk{1}; end
+
+        % Penalize higher amplitudes more
+        weights =  abs(Tk).^2+0.1; % Simple linear weighting based on target amplitude
+        weights(abs(Tk) < 0.1) = 0.1; % High weight for low amplitudes
+
         % L1 + MSE mix
-        l1 = mean(abs(Yk-Tk),'all');
-        mse = mean((Yk-Tk).^2,'all');
+        l1 = mean(weights .* abs(Yk-Tk),'all');
+        mse = mean(weights .* (Yk-Tk).^2,'all');
         accum = accum + (0.6*mse + 0.4*l1);
+    end
+    L = accum/numOut;
+end
+
+function L = peak_preserving_noise_suppressing_loss(varargin)
+    numOut = numel(varargin)/2;
+    accum = 0;
+    for k=1:numOut
+        Yk = varargin{1,k};
+        Tk = varargin{1,k+numOut};
+        if iscell(Yk), Yk=Yk{1}; end
+        if iscell(Tk), Tk=Tk{1}; end
+
+        % Define what's a "peak" vs "noise" in your data
+        peak_threshold = 2.0;  % Adjust based on your data
+        
+        % Separate masks
+        is_peak = abs(Tk) > peak_threshold;
+        is_noise = abs(Tk) <= peak_threshold;
+        
+        % Peak reconstruction loss (heavily weighted)
+        peak_error = ((Yk - Tk) .* is_peak).^2;
+        peak_loss = sum(peak_error, 'all') / (sum(is_peak, 'all') + 1e-6);
+        
+        % Noise suppression loss (penalize predicted noise)
+        noise_pred = Yk .* is_noise;
+        noise_true = Tk .* is_noise;
+        noise_loss = mean((noise_pred - noise_true).^2, 'all');
+        
+        % Additional: penalize high predictions where truth is low
+        false_peak_penalty = sum((abs(Yk) .* is_noise - abs(Tk) .* is_noise).^2, 'all') / (sum(is_noise, 'all') + 1e-6);
+        
+        % Combine with heavy emphasis on peaks
+        accum = accum + (3.0*peak_loss + 1.0*noise_loss + 2.0*false_peak_penalty);
     end
     L = accum/numOut;
 end
@@ -263,7 +304,7 @@ end
 
 rng(42); % For reproducibility
 % Create single datastore that handles all 28 inputs and targets
-num_in = 28;
+num_in = 1;
 b_size = 4;
 overlap_size = 2;
 
@@ -273,12 +314,16 @@ States105 = load(sprintf("data\\States_downsampled_%d.mat", 105)).States_downsam
 States109 = load(sprintf("data\\States_downsampled_%d.mat", 109)).States_downsampled;  % Load the Cycle4 datastore
 
 % 148 instances of data for the training and 28 for validation
-envelope = true; % Whether to use envelope of signals or raw signals
-inputDs1 = CyclemultiInputDatastore_separate_sin_freq(States103, num_in, b_size, overlap_size,32,envelope,1);
-inputDs2 = CyclemultiInputDatastore_separate_sin_freq(States104, num_in, b_size, overlap_size,58,envelope,1);
-inputDs3 = CyclemultiInputDatastore_separate_sin_freq(States105, num_in, b_size, overlap_size,30,envelope,1);
-inputDs4 = CyclemultiInputDatastore_separate_sin_freq(States109, num_in, b_size, overlap_size,28,envelope,1);
+envelope = false; % Whether to use envelope of signals or raw signals
+freq = 4; % frequency index to extract
+path_idx = 1; % path index to extract
+benchmark = false; % whether to use benchmark datastore (no random cropping)
+inputDs1 = CyclemultiInputDatastore_separate_sin_freq(States103, num_in, b_size, overlap_size,32,envelope,freq, benchmark, 'paths', path_idx); % Provide paths only for first datastore
+inputDs2 = CyclemultiInputDatastore_separate_sin_freq(States104, num_in, b_size, overlap_size,58,envelope,freq, benchmark, 'paths', path_idx);
+inputDs3 = CyclemultiInputDatastore_separate_sin_freq(States105, num_in, b_size, overlap_size,30,envelope,freq, benchmark, 'paths', path_idx);
+inputDs4 = CyclemultiInputDatastore_separate_sin_freq(States109, num_in, b_size, overlap_size,28,envelope,freq, benchmark, 'paths', path_idx);
 inputDs = combine(inputDs1,  inputDs2, inputDs3, inputDs4, ReadOrder="sequential");  % Combine datastores'
+
 
 total_obs = inputDs1.NumObservations+inputDs2.NumObservations+inputDs3.NumObservations+inputDs4.NumObservations;
 train_obs_idx = randperm(total_obs, round(0.80*total_obs));
@@ -310,29 +355,46 @@ end
 options = trainingOptions("adam", ...  % Adam optimizer for better convergence
     MaxEpochs=50, ...  % Increased epochs for the improved network
     MiniBatchSize=b_size, ...  % Smaller batch size for stability
-    InitialLearnRate=0.005, ...  % Conservative learning rate
+    InitialLearnRate=0.001, ...  % Conservative learning rate
     LearnRateSchedule="piecewise", ...
-    LearnRateDropPeriod=5, ...
+    LearnRateDropPeriod=20, ...
     LearnRateDropFactor=0.5, ...
     GradientThresholdMethod="l2norm", ...
     GradientThreshold=10, ...  % Gradient clipping to prevent explosion
     Verbose=true, ...
-    VerboseFrequency=50, ...
+    VerboseFrequency=10, ...
     ValidationPatience=5, ...  % Early stopping if no improvement
     Plots="training-progress", ...
-    InputDataFormats=repmat("BSSC", 1, 28), ...  % 28 inputs
-    TargetDataFormats=repmat("BSSC", 1, 28), ...  % 28 targets (including G2/latent_out)
+    InputDataFormats=repmat("BSSC", 1, num_in), ...  % 28 inputs
+    TargetDataFormats=repmat("BSSC", 1, num_in), ...  % 28 targets (including G2/latent_out)
     Shuffle="every-epoch",...
     ValidationData=inputDs_val,...
-    ValidationFrequency=50);
-    
+    ValidationFrequency=10);
+
+options = trainingOptions("adam", ...
+    MaxEpochs=100, ...  % More epochs
+    MiniBatchSize=4, ...  % Smaller batch size for stability
+    InitialLearnRate=0.001, ... % Lower learning rate
+    LearnRateSchedule="piecewise", ...
+    LearnRateDropPeriod=10, ...
+    LearnRateDropFactor=0.8, ...
+    GradientThresholdMethod="l2norm", ...
+    GradientThreshold=10, ...
+    Verbose=true, ...
+    VerboseFrequency=10, ...
+    ValidationPatience=15, ...  % More patience
+    Plots="training-progress", ...
+    InputDataFormats=repmat("BSSC", 1, num_in), ...
+    TargetDataFormats=repmat("BSSC", 1, num_in), ...
+    Shuffle="every-epoch",...
+    ValidationData=inputDs_val,...
+    ValidationFrequency=10);
+
 
 % Select scalable composite loss (append scaling args) REMEBER TO CHANGE METADATA THEN
-% lossFcn = @(varargin) total_loss(varargin{:});
-lossFcn = @(varargin) mse_l1_loss(varargin{:})
+lossFcn = @(varargin) peak_preserving_noise_suppressing_loss(varargin{:}); % Use standard MSE for stability
+% lossFcn = @(varargin) peak_preserving_noise_suppressing_loss(varargin{:});
 
-latent_size = 15;
-[a, b, c] = deal(1, 0, 0); % Weights for MSE, monotonicity, proxy loss (last 2 obviously 0)
 
 params.channels1 = 265;
 params.channels2 = 128;
@@ -340,10 +402,50 @@ params.channels3 = 64;
 params.channels4 = 16;
 params.channels5 = 1;
 
-params.kernel_size1 = 10;% first frequency is  50 kHz, sampling rate is 2e6 Hz, therefore 40 samples per period, kernel 10 seems reasonable
+params.kernel_size4 = 11;
+params.kernel_size5 = 9;
 
-%net = architectures_container.buildOptimizedNetwork_compressed_downsampled_sin_freq_paper(params);
-net = load("C:\Users\Maria\Documents\Honours Programme\Networks\GAN\results\downsampled_states_optim\net_best_9_22_13_11_11_6_freq1.mat").net;
+params.kernel_size1 = 40;% first frequency is  50 kHz, sampling rate is 2e6 Hz, therefore 40 samples per period, kernel 10 seems reasonable
+param.dropout_encoder = 0.2
+param.dropout_decoder = 0.2
+
+latent_size = 15
+
+params.kernel_size1 = 13;
+params.kernel_size2 = 11;
+params.kernel_size3 = 11;
+
+params.channels1 = 9;
+params.channels2 = 22;
+params.dilation_factor = 6;
+params.num_inputs = num_in;
+
+params.channels1 =  48;
+params.channels2 =  27;
+params.kernel_size1 = 18;
+params.kernel_size2 = 11;
+params.kernel_size3 = 15;
+params.batch_size =  5;
+params.dilation_factor = 4;
+params.desired_latent_size = latent_size;
+
+params.channels1 =  62;
+params.channels2 =  23;
+params.kernel_size1 = 19;
+params.kernel_size2 = 14;
+params.kernel_size3 = 13;
+params.batch_size =  4;
+params.dilation_factor = 8;
+param.dropout_encoder = 0.030436 ;
+param.dropout_decoder = 0.07946;
+params.desired_latent_size = latent_size;
+params.benchmark_mode = benchmark;
+params.input_y = 1;
+
+
+
+net = architectures_container.buildOptimizedNetwork_compressed_downsampled_sin_freq_less_RES_bn_dr(params);
+
 fprintf('Network loaded successfully. Starting training...\n');
 
 %An 'epoch' represents one pass through the entire training dataset, 
@@ -356,15 +458,12 @@ disp(training_info.TrainingHistory);
 %% Save Results
 
 % Create results directory if it doesn't exist
-resultsDir = fullfile(projectRoot, 'results','downsampled_sin_freq_nooptim');
+resultsDir = fullfile(projectRoot, 'results','one_path_one_freq_downsampled');
 if ~exist(resultsDir, 'dir')
     mkdir(resultsDir);
     fprintf('Created results directory: %s\n', resultsDir);
 end
 
-% Save training info (you already had this)
-infoPath = fullfile(resultsDir, 'train_info.mat');
-save(infoPath,"training_info")
 
 % Save complete model with timestamp and metadata
 timestamp = datestr(now, 'yyyy-mm-dd_HH-MM-SS');
@@ -373,39 +472,26 @@ timestamp = datestr(now, 'yyyy-mm-dd_HH-MM-SS');
 model_metadata = struct();
 model_metadata.timestamp = timestamp;
 model_metadata.num_inputs = num_in;
+model_metadata.path_index = path_idx;
+model_metadata.frequency = freq;
 model_metadata.batch_size = b_size;
 model_metadata.max_epochs = options.MaxEpochs;
 model_metadata.initial_lr = options.InitialLearnRate;
 model_metadata.optimizer = "adam";
-model_metadata.loss_function = "amplitude_aware_loss";
+model_metadata.loss_function = "mse_l1_loss";
 model_metadata.data_cycles = [103, 104, 105, 109];
 model_metadata.latent_size = latent_size;
-model_metadata.loss_weights = struct('MSE', a, 'Monotonicity', b, 'Proxy', c);
 model_metadata.final_loss = training_info.TrainingHistory.Loss(end);
 if isfield(training_info, 'ValidationHistory') && ~isempty(training_info.ValidationHistory.Loss)
     model_metadata.final_val_loss = training_info.ValidationHistory.Loss(end);
 end
-%modelName = sprintf("paper_net_%f_%d_%d_%d_%d_%d_%d_downsampled_sin_freq.mat", model_metadata.final_loss ,params.channels1, params.channels2, params.channels3, params.channels4, params.channels5,params.kernel_size1);
-modelName = "from_bayesian_optimization.mat";
-%modelName = sprintf("net_%f_%d_%d_%d_%d_%d_%d_3.mat", model_metadata.final_loss ,params.kernel_size1, params.kernel_size2, params.kernel_size3, params.channels1, params.channels2,params.dilation_factor);
+
+modelName = sprintf("path_%d_freq_%d_net_loss_%f.mat", path_idx, freq, model_metadata.final_loss);
 modelPath = fullfile(resultsDir, modelName);
 
 
 save(modelPath, "trained_net", "training_info", "model_metadata", '-v7.3');
 fprintf('✅ Complete model saved to: %s\n', modelPath);
 
-% % Also save a lightweight version (just the network) for quick loading
-% lightPath = fullfile(resultsDir, sprintf("net_only_%s.mat", timestamp));
-% save(lightPath, "trained_net");
-% fprintf('✅ Network-only version saved to: %s\n', lightPath);
 
-
-% Create and save an offline training-progress plot
-try
-    figOut = fullfile(resultsDir, sprintf('training_progress_%s.png', timestamp));
-    plotTrainingProgress(training_info, figOut, 'Training Progress ');
-    fprintf('📈 Saved training-progress plot to: %s\n', figOut);
-catch ME
-    warning(ME.identifier, 'Could not create training-progress plot: %s', ME.message);
-end
 

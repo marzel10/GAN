@@ -1,5 +1,7 @@
-classdef CyclemultiInputDatastore_envelope < matlab.io.Datastore & ...
-                                     matlab.io.datastore.MiniBatchable
+classdef CyclemultiInputDatastore_separate_sin_freq < matlab.io.Datastore & ...
+                                     matlab.io.datastore.MiniBatchable & ...
+                                    matlab.io.datastore.Shuffleable & ...
+                                    matlab.io.datastore.Subsettable
     properties
         Cycles_array
         CurrentIndex
@@ -10,6 +12,10 @@ classdef CyclemultiInputDatastore_envelope < matlab.io.Datastore & ...
         info
         k
         lambda
+        envelope = false; % Whether to use envelope of signals or raw signals
+        frequency % frequency index to extract
+        path % paths to use when only one input is desired
+        benchmark % whether to include benchmark data, true - include, false - exclude
     end
 
     properties (SetAccess = protected)
@@ -17,7 +23,7 @@ classdef CyclemultiInputDatastore_envelope < matlab.io.Datastore & ...
     end
 
     methods
-        function ds = CyclemultiInputDatastore_envelope(cycleStructArray, numInputs, miniBatchSize, overlap_size, numCycles)
+        function ds = CyclemultiInputDatastore_separate_sin_freq(cycleStructArray, numInputs, miniBatchSize, overlap_size, numCycles, envelope, frequency, benchmark,varargin)
             ds.Cycles_array = cycleStructArray;
             ds.CurrentIndex = 1;
             ds.MiniBatchSize = miniBatchSize;  % Set mini batch size
@@ -32,18 +38,20 @@ classdef CyclemultiInputDatastore_envelope < matlab.io.Datastore & ...
             end
             ds.NumObservations = numel(ds.Cycles_array);
             ds.NumInputs = numInputs;
+            ds.envelope = envelope;
+            ds.frequency = frequency;
+            ds.benchmark = benchmark;
+
+            p = inputParser;
+            p.FunctionName = 'CyclemultiInputDatastore_separate_sin_freq';
+            addParameter(p, 'paths', [], @(x) isnumeric(x) && ds.NumInputs == 1);
+            parse(p, varargin{:});
+            ds.path = p.Results.paths;
+            if ~isempty(ds.path) && ds.NumInputs ~= 1
+                error('When providing ''paths'', NumInputs must be 1. Got NumInputs=%d.', ds.NumInputs);
+            end
+            
             ds.info = "data with " + num2str(ds.NumObservations) + " observations, divided into " + num2str(ds.NumObservations/ds.MiniBatchSize) + " batches";
-            min_stress = -6.5; %kN
-            max_stress = -65; %kN
-            ultimate_strength = -104; %kN
-            amp_stress = abs(max_stress - min_stress)/2; %kN
-            mean_stress = (max_stress + min_stress)/2; %kN
-            nor_amp_stress = amp_stress/ultimate_strength;
-            nor_mean_stress = mean_stress/ultimate_strength;
-
-            ds.k = -1.17*nor_mean_stress - 19.9*nor_amp_stress + 5.92;
-            ds.lambda = 0.0661*nor_mean_stress - 1.05*nor_amp_stress + 0.754;
-
         end
 
         function tf = hasdata(ds)
@@ -53,43 +61,38 @@ classdef CyclemultiInputDatastore_envelope < matlab.io.Datastore & ...
         function [data, info] = read(ds)
             info = ds.info;
             % Initialize cell arrays for inputs and targets (will preallocate on first sample)
-            allData = cell(1, 2 * ds.NumInputs + 1);
+            allData = cell(1, 2 * ds.NumInputs);
             batchCount = 0;
             startIndex = ds.CurrentIndex; % Track to compute how many elements were consumed
 
             while batchCount < ds.MiniBatchSize && ds.hasdata()
-                allPairData = ds.extractAllCycleData(ds.Cycles_array(ds.CurrentIndex));
+                allPairData = ds.extractAllCycleData(ds.Cycles_array(ds.CurrentIndex), ds.path);
 
                 for i = 1:ds.NumInputs
                     if i <= length(allPairData)
                         cycleData = allPairData{i};
-                        % Preallocate all outputs once per batch using first available cycle
-                        if batchCount == 0 && i == 1 && isempty(allData{1})
-                            [T,S,C] = size(cycleData); % expected 4000x2x6
-                            B = ds.MiniBatchSize;
-                            % Inputs 1..NumInputs
-                            for j = 1:ds.NumInputs
-                                allData{j} = zeros(B, T, S, C, 'like', cycleData);
+                        
+                       
+                            % Preallocate all outputs once per batch using first available cycle
+                            if batchCount == 0 && i == 1 && isempty(allData{1})
+                                [S1,S2,C] = size(cycleData); % expected 4000x2x6
+                                B = ds.MiniBatchSize;
+                                % Inputs 1..NumInputs
+                                for j = 1:ds.NumInputs
+                                    allData{j} = zeros(B, S1, S2, C, 'like', cycleData);
+                                end
+                                
+                                % Targets NumInputs+1 .. 2*NumInputs
+                                for j = 1:ds.NumInputs
+                                    allData{ds.NumInputs+j} = zeros(B, S1, S2, C, 'like', cycleData);
+                                end
                             end
-                            % Latent target slot (NumInputs+1)
-                            %allData{ds.NumInputs+1} = zeros(B, T, S, C, 'like', cycleData);
-                            allData{ds.NumInputs+1} = zeros(B, 1, 'like', cycleData); % scalar marker
-                            % Targets NumInputs+2 .. 2*NumInputs+1
-                            for j = 1:ds.NumInputs
-                                allData{ds.NumInputs+1+j} = zeros(B, T, S, C, 'like', cycleData);
-                            end
-                        end
 
-                        % Fill this batch row
-                        allData{i}(batchCount + 1, :, :, :) = cycleData;  % input i
-                        allData{i + ds.NumInputs + 1}(batchCount + 1, :, :, :) = cycleData; % target i
-
-                        if i == 1
-                            % Latent target: keep datastore outputs numeric (no dlarray)
-                            latentVal = double(real(ds.lambda * (log(max(ds.CurrentIndex,1) / max(ds.NumCycles,1)))^(1/ds.k)));
-                            % allData{ds.NumInputs+1}(batchCount + 1, 1, 1, 1) = latentVal; % scalar marker
-                            allData{ds.NumInputs+1}(batchCount + 1, 1) = latentVal; % scalar marker
-                        end
+                            % Fill this batch row
+                            allData{i}(batchCount + 1, :, :, :) = cycleData;  % input i
+                            allData{i + ds.NumInputs }(batchCount + 1, :, :, :) = cycleData; % target i
+                        
+                       
                     else
                         warning('Not enough pairs of data to split into inputs');
                     end
@@ -113,7 +116,11 @@ classdef CyclemultiInputDatastore_envelope < matlab.io.Datastore & ...
             % Trim allocated arrays to the actual number of rows read (nRead)
             for j = 1:numel(allData)
                 if ~isempty(allData{j}) && size(allData{j},1) > nRead
-                    allData{j} = allData{j}(1:nRead, :, :, :);
+                    if ~ds.benchmark
+                        allData{j} = allData{j}(1:nRead, :, :);
+                    else
+                        allData{j} = allData{j}(1:nRead, :, :, :);
+                    end
                 end
             end
 
@@ -137,7 +144,7 @@ classdef CyclemultiInputDatastore_envelope < matlab.io.Datastore & ...
         end
 
         function s = data_size(ds)
-            allPairData = ds.extractAllCycleData(ds.Cycles_array(ds.CurrentIndex));
+            allPairData = ds.extractAllCycleData(ds.Cycles_array(ds.CurrentIndex), ds.path);
             if ~isempty(allPairData)
                 cycleData = allPairData{1};
                 s = size(cycleData);  % Return size without adding batch dimension
@@ -150,24 +157,44 @@ classdef CyclemultiInputDatastore_envelope < matlab.io.Datastore & ...
             N = numel(ds.Cycles_array);
         end
 
-        function inputsCell = extractAllCycleData(ds, cycleStruct)
+        function inputsCell = extractAllCycleData(ds, cycleStruct, paths)
             numPairs = numel(cycleStruct.Frequency(1).Pair_idx);
-            numFreq  = numel(cycleStruct.Frequency);
             numPoints = numel(cycleStruct.Frequency(1).Pair_idx(1).Amplitude);
 
+            if ~isempty(paths)
+                numPairs = 1; % override to 1 if paths are provided
+            end
             inputsCell = cell(1, numPairs);
 
             for p = 1:numPairs
-                pairData = zeros(numPoints, 2, numFreq);
+                
 
-                for f = 1:numFreq
-                    amp   = cycleStruct.Frequency(f).Pair_idx(p).Amplitude;
-                    bench = cycleStruct.Frequency(f).Pair_idx(p).Banchmark_Amplitude;
+                if ~isempty(paths)
+                    amp   = cycleStruct.Frequency(ds.frequency).Pair_idx(paths).Amplitude;
+                    bench = cycleStruct.Frequency(ds.frequency).Pair_idx(paths).Benchmark_Amplitude;
+                else
+                    amp   = cycleStruct.Frequency(ds.frequency).Pair_idx(p).Amplitude;
+                    bench = cycleStruct.Frequency(ds.frequency).Pair_idx(p).Benchmark_Amplitude;
+                end
+
+                if ds.envelope
+                    % bench = abs(hilbert(bench));
                     [amp, ~] = envelope(amp);
                     [bench, ~] = envelope(bench);
-                    pairData(:, 1, f) = amp;
-                    pairData(:, 2, f) = bench;
+                
                 end
+
+
+                
+                if ds.benchmark
+                    pairData = zeros(numPoints, 2);
+                    pairData(:, 2) = single(bench);
+                else
+                    pairData = zeros(numPoints, 1);
+                end
+                pairData(:, 1) = single(amp);
+                
+                
 
                 inputsCell{p} = pairData;
             end
@@ -178,6 +205,19 @@ classdef CyclemultiInputDatastore_envelope < matlab.io.Datastore & ...
             shuffleIdx = randperm(numCycles);
             ds.Cycles_array = ds.Cycles_array(shuffleIdx);
             ds.reset();
+        end
+    end
+
+    methods (Access = protected)
+        function subds = subsetByReadIndices(ds, indices)
+            subds.Cycles_array = ds.Cycles_array(indices);
+            subds.NumObservations = numel(indices);
+            
+            reset(subds);
+        end
+
+        function n = maxpartitions(ds)
+            n = ds.NumObservations;
         end
     end
 end

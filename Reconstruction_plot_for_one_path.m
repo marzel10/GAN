@@ -1,10 +1,3 @@
-%% Health Index (HI) / Prediction Plot Script
-% Robust loader for trained multi-input GAN network and inference over a cycle.
-% Fixes issues:
-%  - Custom layer classes not on path (change_format, deconcatenation, GAN)
-%  - Supplying full training-style table (with latent + targets) directly to predict
-%  - MiniBatch/Overlap mismatch for inference
-
 %% 1. Path Setup (mirror training script essentials)
 scriptDir = fileparts(mfilename('fullpath'));
 projectRoot = scriptDir; % this file appears at project root
@@ -24,16 +17,19 @@ for c = reqClasses
 end
 
 
-close all; 
+
 fprintf('[HI_plot] Starting inference script...\n');
 
 % Use explicit fprintf + input('>') to avoid Live Editor / console '?' issueHI_plot
-
+%% 4. Build Inference Datastore (MiniBatchSize=1, no overlap) and specify the network
 fprintf('Enter the model file path:\n');
 modelFile = strtrim(input('> ', 's'));
 
 fprintf('Enter the data file path (e.g., data/States_109.mat), remember to give path to a dataset formated corresponding to the network you provided:\n');
 datapath = strtrim(input('> ', 's'));
+
+fprintf('Is benchmark included in the dataset? (true/false):\n');
+benchmark_included = input('> ');
 
 fprintf('Do you want to use one frequency only? (true/false):\n');
 single_freq = input('> ');
@@ -43,7 +39,7 @@ if single_freq
 else
     frequencies = 1:6; % specify which frequencies to plot (1 to 6)
 end
-%% 4. Build Inference Datastore (MiniBatchSize=1, no overlap)
+
 if ~isempty(regexp(datapath,'(?i)downsampled','once'))
     cycleStruct = load(datapath).States_downsampled; % single cycle
     disp('Using downsampled data for inference datastore.');
@@ -51,23 +47,21 @@ else
     cycleStruct = load(datapath).States; % single cycle
 end
 numCycles = size(cycleStruct, 2);
-nInputs = 1; miniBatchSize = 1; overlap = 0; envelope = false; % numCycles used only for latent formula
+nInputs = 1; miniBatchSize = 1; overlap = 0; envelope = false;
+
+fprintf('Enter the path :\n');
+path_idx = input('> ');
 
 if single_freq
-    rawDs = CyclemultiInputDatastore_separate_sin_freq(cycleStruct, nInputs, miniBatchSize, overlap, numCycles, envelope, frequencies,'paths', paths_to_plot);
+    rawDs = CyclemultiInputDatastore_separate_sin_freq(cycleStruct, nInputs, miniBatchSize, overlap, numCycles, envelope, frequencies, benchmark_included, 'paths', path_idx);
 else
-    rawDs = CyclemultiInputDatastore_separate(cycleStruct, nInputs, miniBatchSize, overlap, numCycles, envelope);
+    rawDs = CyclemultiInputDatastore_separate(cycleStruct, nInputs, miniBatchSize, overlap, numCycles, envelope, 'paths', path_idx);
 end
 numCycles = rawDs.NumObservations;
 
 fprintf('Enter the cycles to plot (e.g., [1 10 27] up to %d):\n', numCycles);
 cycles_to_plot = input('> ');
 
-fprintf('Enter the paths to plot (e.g., [2 15 28]):\n');
-paths_to_plot = input('> ');
-
-fprintf('Plot latent space? (true/false):\n');
-plot_latent = input('> ');
 
 % Basic validation / defaults
 if isempty(modelFile)
@@ -79,12 +73,10 @@ end
 if isempty(cycles_to_plot)
     cycles_to_plot = 1;
 end
-if isempty(paths_to_plot)
-    paths_to_plot = 1;
+if isempty(path_idx)
+    path_idx = 1;
 end
-if isempty(plot_latent)
-    plot_latent = false;
-end
+
 
 %% 2. Load Trained Network
 % Auto-select most recent valid trained GAN model file in results folder
@@ -168,20 +160,10 @@ fprintf('[HI_plot] Loaded network with %d learnables.\n', height(net.Learnables)
 %% 3. Inspect Inputs
 inNames = net.InputNames; nInputs = numel(inNames);
 fprintf('[HI_plot] Network expects %d inputs.\n', nInputs);
-if nInputs ~= 28
-	warning('[HI_plot] Network expects %d inputs (not 28). Adjusting datastore construction accordingly.', nInputs);
-end
 
-
-
-
-%time = cycleStruct(1).Frequency(1).Pair_idx(1).Time;
-%Fs = (time(2)-time(1))^-1; % sampling frequency
-%L = length(time);
-X = zeros(1,28); % placeholder for previous prediction
+X = zeros(1,nInputs); % placeholder for previous prediction
 % Previous input batch placeholder (cell array with correct length, empty contents)
 Y = cell(1, nInputs);
-latent_space = zeros(nInputs, rawDs.NumObservations);
 
 for i = 1:rawDs.NumObservations
 
@@ -194,11 +176,7 @@ for i = 1:rawDs.NumObservations
     % Extract only the input columns (first nInputs). Each entry: [B T S C]
     inputCells = cell(1, nInputs);
     for k = 1:nInputs
-        arr = batchTbl{1,k}; % row 1, column k cell content
-        % if ndims(arr) ~= 4
-        %     error('[HI_plot] Input %d has ndims=%d (expected 4: BxTxSxC).', k, ndims(arr));
-        % end
-        
+        arr = batchTbl{1,k}; % row 1, column k cell content        
         inputCells{k} = arr; % keep batch dimension
     end
     
@@ -212,16 +190,11 @@ for i = 1:rawDs.NumObservations
         nOut = numel(net.OutputNames);
         YPred = cell(1,nOut);
         [YPred{:}] = predict(net, inputCells{:});
-        % for k = 1:nOut
-        %     eval(sprintf('YPred%d = YPred{k};',k));
-        % end
     catch ME
         fprintf(2,'[HI_plot][ERROR] Prediction failed: %s\n', ME.message);
         rethrow(ME);
     end
-    %latent_space(:,i) = squeeze(YPred{1}); % store latent space output
-
-    %cycles_to_plot = [1, 10, 27]; % specify which cycles to plot
+    
     doPlot = true; % set true to enable plotting
     if ismember(i, cycles_to_plot)
         % Overlay all prediction outputs (excluding latent) on one axes
@@ -236,132 +209,53 @@ for i = 1:rawDs.NumObservations
             warning('[HI_plot] Unexpected number of outputs (%d) for %d inputs. Attempting best-effort mapping.', numPreds, nInputs);
             pathOutStart = max(1, numPreds - nInputs + 1);
         end
-        % Loop over each path
-        for p = paths_to_plot
-            outIdx = pathOutStart + (p-1);
-            if outIdx > numPreds
-            warning('[HI_plot] Output index %d exceeds available predictions (%d). Skipping path %d.', outIdx, numPreds, p);
-            continue;
-            end
-            try
-            yk = YPred{outIdx};
-            catch
-            warning('[HI_plot] Failed to access YPred{%d} for path %d.', outIdx, p);
-            continue;
-            end
-            fh = figure('Name',sprintf('Cycle_%03d_Path_%02d', i, p), 'NumberTitle','off');
-            if single_freq
-                tiledlayout(fh, 1, 1, 'Padding','compact','TileSpacing','compact');
-                freq = frequencies(1);
-                nexttile;
-                hold on; grid on;
-                title(sprintf('Freq %d', freq));
-                xlabel('Time Index'); ylabel('Amplitude');
-                % Reference signal (input path p)
-                try
-                    refSig = squeeze(extractdata(inputCells{p}(1,:,1,freq)));
-                catch
-                    refSig = squeeze(inputCells{p}(1,:,1,freq));
-                end
-                hIn   = plot(refSig,'k--','LineWidth',1.1,'DisplayName','Input'); % drawn after -> on top
-                try
-                    predSig = squeeze(extractdata(yk(1,:,1,freq)));
-                catch
-                    predSig = squeeze(yk(1,:,1,freq));
-                end
-                % Plot prediction first, then input so input is on top
-                hPred = plot(predSig,'b','LineWidth',0.9,'DisplayName','Pred');
-                
-                legend('Location','best','FontSize',7);
-                sgtitle(sprintf('State %d - Path %d (Output %d)', i, p, outIdx));
-                continue; % skip to next path
-            else
-                tiledlayout(fh, 2, 6, 'Padding','compact','TileSpacing','compact');
-                for fi = 1:numel(frequencies)
-                    freq = frequencies(fi);
-                    nexttile;
-                    hold on; grid on;
-                    title(sprintf('Freq %d', freq));
-                    xlabel('Time Index'); ylabel('Amplitude');
-                    % Reference signal (input path p)
-                    try
-                        refSig = squeeze(extractdata(inputCells{p}(1,:,1,freq)));
-                    catch
-                        refSig = squeeze(inputCells{p}(1,:,1,freq));
-                    end
-                    hIn   = plot(refSig,'k--','LineWidth',1.1,'DisplayName','Input'); % drawn after -> on top
-                    try
-                        predSig = squeeze(extractdata(yk(1,:,1,freq)));
-                    catch
-                        predSig = squeeze(yk(1,:,1,freq));
-                    end
-                    % Plot prediction first, then input so input is on top
-                    hPred = plot(predSig,'b','LineWidth',0.9,'DisplayName','Pred');
-                    
-                    if fi == 1
-                        legend('Location','best','FontSize',7);
-                    end
-                    
-                    % nexttile;
-                    % hold on; grid on;
-                    % title(sprintf('Freq %d', freq));
-                    % xlabel('Time Index'); ylabel('Amplitude');
-
-                    % % Predicted signal
-                    % try
-                    %     predSig = squeeze(extractdata(yk(1,:,1,freq)));
-                    % catch
-                    %     predSig = squeeze(yk(1,:,1,freq));
-                    % end
-                    % % Plot prediction first, then input so input is on top
-                    % hPred = plot(predSig,'b','LineWidth',0.9,'DisplayName','Pred');
-                    
-                    % if fi == 1
-                    %     legend('Location','best','FontSize',7);
-                    % end
-                end
-            end
-            sgtitle(sprintf('State %d - Path %d (Output %d)', i, p, outIdx));
+        available_freq = [50,100,125,150,200,250]; % kHz
+       
+            
+        try
+        yk = YPred{1};
+        catch
+        warning('[HI_plot] Failed to access YPred');
+        continue;
         end
+
+        fh = figure('Name',sprintf('Cycle_%03d_Path_%02d', i, path_idx), 'NumberTitle','off');
         
-    end
-    % (Optional) save each figure
-    % outDir = fullfile(projectRoot,'results','HI_plots');
-    % if ~exist(outDir,'dir'), mkdir(outDir); end
-    % saveas(fh, fullfile(outDir, sprintf('cycle_%03d.png',i)));
-    if isequal(YPred{2},YPred{3})
-        disp('YPred2 and YPred3 are identical.');
-    end
-    if isequal(X, YPred{2})
-         warning('[HI_plot] Cycle %d, YPred is identical to previous cycle.', i);
-    else
-         X = YPred{2}; % store for next comparison
+        tiledlayout(fh, 1, 1, 'Padding','compact','TileSpacing','compact');
+        
+        nexttile;
+        hold on; grid on;
+        title(sprintf('Freq %d kHz Path %d', available_freq(frequencies), path_idx));
+        xlabel('Time Index'); ylabel('Amplitude');
+        
+        try
+            refSig = squeeze(extractdata(inputCells{1}(1,:,1,1)));
+        catch
+            refSig = squeeze(inputCells{1}(1,:,1,1));
+        end
+        hIn   = plot(refSig,'k--','LineWidth',1.1,'DisplayName','Input'); % drawn after -> on top
+        try
+            predSig = squeeze(extractdata(yk(1,:,1,1)));
+        catch
+            predSig = squeeze(yk(1,:,1,1));
+        end
+        % Plot prediction first, then input so input is on top
+        hPred = plot(predSig,'b','LineWidth',0.9,'DisplayName','Pred');
+        
+        legend('Location','best','FontSize',7);
+        sgtitle(sprintf('State %d - Path %d Frequency %d kHz', i, path_idx, available_freq(frequencies)));
+        hold off;          
+        
+        
         
     end
     
+    if isequal(X, YPred{1})
+         warning('[HI_plot] Cycle %d, YPred is identical to previous cycle.', i);
+    else
+         X = YPred{1}; % store for next comparison
+    end
+    
 end
-
-%% 6. OPTIONAL: Visualize Latent Space
-if plot_latent 
-    flatent = figure("Name","Latent Space","NumberTitle","off");
-    imagesc(latent_space);
-    colorbar;
-    title('Latent Space Over Cycles');
-    xlabel('Cycle Index');
-    ylabel('Input Index');
-end
-
-%% 7. OPTIONAL: Loop Over Entire Cycle (uncomment to process all observations)
-% reset(rawDs);
-% preds = {};
-% while hasdata(rawDs)
-%     [bt,~] = read(rawDs);
-%     ic = cell(1,nInputs);
-%     for k=1:nInputs
-%         ic{k} = bt{1,k};
-%     end
-%     preds{end+1} = predict(net, ic{:}); %#ok<AGROW>
-% end
-% fprintf('[HI_plot] Processed %d mini-batches.\n', numel(preds));
 
 fprintf('[HI_plot] Inference complete.\n');

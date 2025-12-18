@@ -49,112 +49,9 @@ else
 end
 fprintf('✅ All paths configured successfully\n\n');
 
-%% plotTrainingProgress function
-function hFig = plotTrainingProgress(training_info, savePath, titleStr)
-% Recreates a training-progress style plot (offline) from trainnet info.
-% - training_info: struct returned by trainnet
-% - savePath: full path (png) to save the figure (optional)
-% - titleStr: figure title (optional)
 
-if nargin < 2 || isempty(savePath), savePath = ''; end
-if nargin < 3, titleStr = 'Training Progress'; end
+%% Custom Loss Function
 
-% Extract histories (robust to field names)
-TH = []; VH = [];
-if isfield(training_info,'TrainingHistory'), TH = training_info.TrainingHistory; end
-if isfield(training_info,'ValidationHistory'), VH = training_info.ValidationHistory; end
-
-% Helper to fetch a variable by any of these names
-getVar = @(T,names) getFirstMatch(T, names);
-
-iterT = getVar(TH, {'Iteration','Iter'});
-epochT = getVar(TH, {'Epoch'});
-lr     = getVar(TH, {'LearnRate','LearningRate','BaseLearnRate'});
-lossT  = getVar(TH, {'TrainingLoss','Loss','Objective'});
-accT   = getVar(TH, {'TrainingAccuracy','Accuracy'});
-f1T    = getVar(TH, {'TrainingFScore','FScore','F1'});
-
-iterV = []; lossV = []; accV = []; f1V = [];
-if ~isempty(VH)
-    iterV = getVar(VH, {'Iteration','Iter','ValidationIteration'});
-    lossV = getVar(VH, {'ValidationLoss','Loss'});
-    accV  = getVar(VH, {'ValidationAccuracy','Accuracy'});
-    f1V   = getVar(VH, {'ValidationFScore','FScore','F1'});
-end
-
-% Build the figure (up to 3 rows like training-progress)
-rows = 0;
-hasAcc = ~isempty(accT) || ~isempty(accV);
-hasF1  = ~isempty(f1T)  || ~isempty(f1V);
-hasLoss = ~isempty(lossT);
-if hasAcc, rows = rows+1; end
-if hasF1,  rows = rows+1; end
-if hasLoss,rows = rows+1; end
-if rows==0, error('plotTrainingProgress:NoMetrics','No metrics found in training_info.'); end
-if rows<3 && ~isempty(lr), rows = rows+1; end  % add LR panel if room
-
-hFig = figure('Name',titleStr,'NumberTitle','off','Color','w','Position',[100 100 900 650]);
-tlo = tiledlayout(hFig, rows, 1, 'TileSpacing','compact');
-title(tlo, titleStr);
-
-row = 0;
-
-% 1) Accuracy
-if hasAcc
-    row = row+1; ax = nexttile(tlo,row);
-    if ~isempty(accT), plot(ax, iterT, accT, 'b-', 'DisplayName','Training'); hold(ax,'on'); end
-    if ~isempty(accV), plot(ax, iterV, accV, 'r-', 'DisplayName','Validation'); end
-    grid(ax,'on'); xlabel(ax,'Iteration'); ylabel(ax,'Accuracy (%)'); legend(ax,'Location','southeast'); title(ax,'Accuracy');
-end
-
-% 2) F-score
-if hasF1
-    row = row+1; ax = nexttile(tlo,row);
-    if ~isempty(f1T), plot(ax, iterT, f1T, 'b-', 'DisplayName','Training'); hold(ax,'on'); end
-    if ~isempty(f1V), plot(ax, iterV, f1V, 'r-', 'DisplayName','Validation'); end
-    grid(ax,'on'); xlabel(ax,'Iteration'); ylabel(ax,'FScore'); legend(ax,'Location','southeast'); title(ax,'FScore');
-end
-
-% 3) Loss (semilogy like the UI)
-if hasLoss
-    row = row+1; ax = nexttile(tlo,row);
-    if ~isempty(lossT), semilogy(ax, iterT, lossT, 'b-', 'DisplayName','Training'); hold(ax,'on'); end
-    if ~isempty(lossV), semilogy(ax, iterV, lossV, 'r-', 'DisplayName','Validation'); end
-    grid(ax,'on'); xlabel(ax,'Iteration'); ylabel(ax,'Loss'); legend(ax,'Location','northeast'); title(ax,'Loss');
-end
-
-% 4) Learning rate (if present and room)
-if row < rows && ~isempty(lr)
-    ax = nexttile(tlo,row+1);
-    plot(ax, iterT, lr, 'k-'); grid(ax,'on'); xlabel(ax,'Iteration'); ylabel(ax,'Learn Rate'); title(ax,'Learning Rate Schedule');
-end
-
-% Save if requested
-if ~isempty(savePath)
-    [~,~,ext] = fileparts(savePath);
-    if isempty(ext), savePath = [savePath '.png']; end
-    exportgraphics(hFig, savePath, 'Resolution',150);
-end
-end
-
-function v = getFirstMatch(T, names)
-v = [];
-if isempty(T), return; end
-if istable(T)
-    for k = 1:numel(names)
-        if ismember(names{k}, T.Properties.VariableNames)
-            v = T.(names{k}); v = v(:); return;
-        end
-    end
-elseif isstruct(T)
-    for k = 1:numel(names)
-        if isfield(T, names{k})
-            v = T.(names{k}); v = v(:); return;
-        end
-    end
-end
-end
-%% Custom Loss Functions
 
 
 function L = total_loss(varargin)    
@@ -283,7 +180,8 @@ function L = LossWithLatentRegularization(varargin)
     
     % % 2. CRITICAL: Penalize low variance in latent space
     % % This forces the network to USE the latent dimensions
-    % latent_mean = mean(Z, 4);  % Mean across batch
+    % latent_mean = mean(Z, 4);  % Mean aif fc
+    cross batch
     % latent_var = mean((Z - latent_mean).^2, 4);  % Variance per dimension
     
     % % Penalize if variance is too low (collapsed latent space)
@@ -305,23 +203,37 @@ end
 rng(42); % For reproducibility
 % Create single datastore that handles all 28 inputs and targets
 num_in = 1;
-b_size = 4;
+b_size = 16;
 overlap_size = 2;
-
-States103 = load(sprintf("data\\States_downsampled_%d.mat", 103)).States_downsampled;  % Load the Cycle1 datastore
-States104 = load(sprintf("data\\States_downsampled_%d.mat", 104)).States_downsampled;  % Load the Cycle2 datastore
-States105 = load(sprintf("data\\States_downsampled_%d.mat", 105)).States_downsampled;  % Load the Cycle3 datastore
-States109 = load(sprintf("data\\States_downsampled_%d.mat", 109)).States_downsampled;  % Load the Cycle4 datastore
-
 % 148 instances of data for the training and 28 for validation
 envelope = false; % Whether to use envelope of signals or raw signals
-freq = 4; % frequency index to extract
+freq = 5; % frequency index to extract
 path_idx = 1; % path index to extract
 benchmark = false; % whether to use benchmark datastore (no random cropping)
-inputDs1 = CyclemultiInputDatastore_separate_sin_freq(States103, num_in, b_size, overlap_size,32,envelope,freq, benchmark, 'paths', path_idx); % Provide paths only for first datastore
-inputDs2 = CyclemultiInputDatastore_separate_sin_freq(States104, num_in, b_size, overlap_size,58,envelope,freq, benchmark, 'paths', path_idx);
-inputDs3 = CyclemultiInputDatastore_separate_sin_freq(States105, num_in, b_size, overlap_size,30,envelope,freq, benchmark, 'paths', path_idx);
-inputDs4 = CyclemultiInputDatastore_separate_sin_freq(States109, num_in, b_size, overlap_size,28,envelope,freq, benchmark, 'paths', path_idx);
+fc = true; % whether to use fully connected network
+downsampled = false;
+if downsampled
+    States103 = load(sprintf("data\\States_downsampled_%d.mat", 103)).States_downsampled;  % Load the Cycle1 datastore
+    States104 = load(sprintf("data\\States_downsampled_%d.mat", 104)).States_downsampled;  % Load the Cycle2 datastore
+    States105 = load(sprintf("data\\States_downsampled_%d.mat", 105)).States_downsampled;  % Load the Cycle3 datastore
+    States109 = load(sprintf("data\\States_downsampled_%d.mat", 109)).States_downsampled;  % Load the Cycle4 datastore
+else
+    States103 = load(sprintf("data\\States_%d.mat", 103)).States;  % Load the Cycle1 datastore
+    States104 = load(sprintf("data\\States_%d.mat", 104)).States;  % Load the Cycle2 datastore
+    States105 = load(sprintf("data\\States_%d.mat", 105)).States;  % Load the Cycle3 datastore
+    States109 = load(sprintf("data\\States_%d.mat", 109)).States;  % Load the Cycle4 datastore
+end
+if fc
+    inputDs1 = CyclemultiInputDatastore_separate_sin_freq_fc(States103, num_in, b_size, overlap_size,32,envelope,freq, 'paths', path_idx); % Provide paths only for first datastore
+    inputDs2 = CyclemultiInputDatastore_separate_sin_freq_fc(States104, num_in, b_size, overlap_size,58,envelope,freq, 'paths', path_idx);
+    inputDs3 = CyclemultiInputDatastore_separate_sin_freq_fc(States105, num_in, b_size, overlap_size,30,envelope,freq, 'paths', path_idx);
+    inputDs4 = CyclemultiInputDatastore_separate_sin_freq_fc(States109, num_in, b_size, overlap_size,28,envelope,freq, 'paths', path_idx);
+else
+    inputDs1 = CyclemultiInputDatastore_separate_sin_freq(States103, num_in, b_size, overlap_size,32,envelope,freq, benchmark, 'paths', path_idx); % Provide paths only for first datastore
+    inputDs2 = CyclemultiInputDatastore_separate_sin_freq(States104, num_in, b_size, overlap_size,58,envelope,freq, benchmark, 'paths', path_idx);
+    inputDs3 = CyclemultiInputDatastore_separate_sin_freq(States105, num_in, b_size, overlap_size,30,envelope,freq, benchmark, 'paths', path_idx);
+    inputDs4 = CyclemultiInputDatastore_separate_sin_freq(States109, num_in, b_size, overlap_size,28,envelope,freq, benchmark, 'paths', path_idx);
+end
 inputDs = combine(inputDs1,  inputDs2, inputDs3, inputDs4, ReadOrder="sequential");  % Combine datastores'
 
 
@@ -352,12 +264,18 @@ end
 
 %% Network Training
 
+if fc 
+    format =repmat("BC", 1, num_in),
+else
+    format =repmat("BSSC", 1, num_in),
+end
+
 options = trainingOptions("adam", ...  % Adam optimizer for better convergence
     MaxEpochs=50, ...  % Increased epochs for the improved network
     MiniBatchSize=b_size, ...  % Smaller batch size for stability
     InitialLearnRate=0.001, ...  % Conservative learning rate
     LearnRateSchedule="piecewise", ...
-    LearnRateDropPeriod=20, ...
+    LearnRateDropPeriod=15, ...
     LearnRateDropFactor=0.5, ...
     GradientThresholdMethod="l2norm", ...
     GradientThreshold=10, ...  % Gradient clipping to prevent explosion
@@ -365,27 +283,27 @@ options = trainingOptions("adam", ...  % Adam optimizer for better convergence
     VerboseFrequency=10, ...
     ValidationPatience=5, ...  % Early stopping if no improvement
     Plots="training-progress", ...
-    InputDataFormats=repmat("BSSC", 1, num_in), ...  % 28 inputs
-    TargetDataFormats=repmat("BSSC", 1, num_in), ...  % 28 targets (including G2/latent_out)
+    InputDataFormats=format, ...  % 28 inputs
+    TargetDataFormats=format, ...  % 28 targets (including G2/latent_out)
     Shuffle="every-epoch",...
     ValidationData=inputDs_val,...
     ValidationFrequency=10);
 
 options = trainingOptions("adam", ...
     MaxEpochs=100, ...  % More epochs
-    MiniBatchSize=4, ...  % Smaller batch size for stability
-    InitialLearnRate=0.001, ... % Lower learning rate
+    MiniBatchSize=b_size, ...  % Smaller batch size for stability
+    InitialLearnRate= 0.0010145, ... % Lower learning rate
     LearnRateSchedule="piecewise", ...
-    LearnRateDropPeriod=10, ...
-    LearnRateDropFactor=0.8, ...
+    LearnRateDropPeriod=15, ...
+    LearnRateDropFactor=0.5, ...
     GradientThresholdMethod="l2norm", ...
     GradientThreshold=10, ...
     Verbose=true, ...
     VerboseFrequency=10, ...
-    ValidationPatience=15, ...  % More patience
+    ValidationPatience=30, ...  % More patience
     Plots="training-progress", ...
-    InputDataFormats=repmat("BSSC", 1, num_in), ...
-    TargetDataFormats=repmat("BSSC", 1, num_in), ...
+    InputDataFormats=format, ...
+    TargetDataFormats=format, ...
     Shuffle="every-epoch",...
     ValidationData=inputDs_val,...
     ValidationFrequency=10);
@@ -409,7 +327,7 @@ params.kernel_size1 = 40;% first frequency is  50 kHz, sampling rate is 2e6 Hz, 
 param.dropout_encoder = 0.2
 param.dropout_decoder = 0.2
 
-latent_size = 15
+latent_size = 12
 
 params.kernel_size1 = 13;
 params.kernel_size2 = 11;
@@ -442,10 +360,21 @@ params.desired_latent_size = latent_size;
 params.benchmark_mode = benchmark;
 params.input_y = 1;
 
-
-
-net = architectures_container.buildOptimizedNetwork_compressed_downsampled_sin_freq_less_RES_bn_dr(params);
-
+fc_params.no_params =true;
+fc_params.input_size = 4000;
+fc_params.hidden_layer_size1 = 1961;%1024;
+fc_params.hidden_layer_size2 = 585;%512;
+fc_params.hidden_layer_size3 = 374;%256;
+fc_params.hidden_layer_size4 = 59;%128;
+fc_params.drop_rate = 0.48;
+fc_params.desired_latent_size = latent_size;
+if fc
+    net = architectures_container.deep_fully_connected_network(fc_params);
+    net_name = "Fully Connected Network";
+else
+    net = architectures_container.buildOptimizedNetwork_compressed_downsampled_sin_freq_less_RES_bn_dr(params);
+    net_name = "CNN_less_RES_bn_dr";
+end
 fprintf('Network loaded successfully. Starting training...\n');
 
 %An 'epoch' represents one pass through the entire training dataset, 
@@ -458,7 +387,7 @@ disp(training_info.TrainingHistory);
 %% Save Results
 
 % Create results directory if it doesn't exist
-resultsDir = fullfile(projectRoot, 'results','one_path_one_freq_downsampled');
+resultsDir = fullfile(projectRoot, 'results',sprintf('1p1f_%s', net_name));
 if ~exist(resultsDir, 'dir')
     mkdir(resultsDir);
     fprintf('Created results directory: %s\n', resultsDir);
@@ -482,11 +411,11 @@ model_metadata.loss_function = "mse_l1_loss";
 model_metadata.data_cycles = [103, 104, 105, 109];
 model_metadata.latent_size = latent_size;
 model_metadata.final_loss = training_info.TrainingHistory.Loss(end);
-if isfield(training_info, 'ValidationHistory') && ~isempty(training_info.ValidationHistory.Loss)
-    model_metadata.final_val_loss = training_info.ValidationHistory.Loss(end);
-end
+model_metadata.final_val_loss = training_info.ValidationHistory.Loss(end);
 
-modelName = sprintf("path_%d_freq_%d_net_loss_%f.mat", path_idx, freq, model_metadata.final_loss);
+modelName = sprintf("path_%d_freq_%d_net_loss_%f.mat", path_idx, freq, model_metadata.final_val_loss);
+
+
 modelPath = fullfile(resultsDir, modelName);
 
 

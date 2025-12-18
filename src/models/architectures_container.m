@@ -1429,6 +1429,94 @@ classdef architectures_container
             net = initialize(net);
         end
 
+        function net = deep_fully_connected_network(params)
+            % --- Defaults ---
+            if ~isfield(params,'input_size'), params.input_size = 4000; end
+            if ~isfield(params,'num_in'), params.num_in = 1; end
+            if ~isfield(params,'desired_latent_size'), params.desired_latent_size = 15; end
+            if ~isfield(params,'hidden_layer_size1'), params.hidden_layer_size1 = 400; end
+            if ~isfield(params,'hidden_layer_size2'), params.hidden_layer_size2 = 200; end
+            if ~isfield(params,'hidden_layer_size3'), params.hidden_layer_size3 = 100; end
+            if ~isfield(params,'hidden_layer_size4'), params.hidden_layer_size4 = 50; end
+            if ~isfield(params,'drop_rate'), params.drop_rate = 0.1; end
+            
+
+            input_size = params.input_size;
+            num_in = params.num_in;
+            desired_latent_size = params.desired_latent_size;
+            hidden_layer_size1 = params.hidden_layer_size1;
+            hidden_layer_size2 = params.hidden_layer_size2;
+            hidden_layer_size3 = params.hidden_layer_size3;
+            hidden_layer_size4 = params.hidden_layer_size4;
+            drop_rate = params.drop_rate;
+
+            net = dlnetwork;
+
+            for i=1:num_in
+                in = inputLayer([NaN, input_size],"BC", "Name",sprintf("input_%d",i));
+                net = addLayers(net,in);
+
+                encoder = [
+                    fullyConnectedLayer(hidden_layer_size1, "Name", sprintf("fc_1_%d", i), "WeightsInitializer","he", 'BiasInitializer','zeros')
+                    architectures_container.helperELU(sprintf("elu_1_%d", i))
+                    batchNormalizationLayer("Name",sprintf("bn_1_%d",i))
+                    dropoutLayer(drop_rate,"Name",sprintf("dropout_1_%d",i))
+
+                    fullyConnectedLayer(hidden_layer_size2, "Name", sprintf("fc_2_%d", i), "WeightsInitializer","he", 'BiasInitializer','zeros')
+                    architectures_container.helperELU(sprintf("elu_2_%d", i))
+                    batchNormalizationLayer("Name",sprintf("bn_2_%d",i))
+                    dropoutLayer(drop_rate,"Name",sprintf("dropout_2_%d",i))
+
+                    fullyConnectedLayer(hidden_layer_size3, "Name", sprintf("fc_3_%d", i), "WeightsInitializer","he", 'BiasInitializer','zeros')
+                    architectures_container.helperELU(sprintf("elu_3_%d", i))
+                    batchNormalizationLayer("Name",sprintf("bn_3_%d",i))
+                    dropoutLayer(drop_rate,"Name",sprintf("dropout_3_%d",i))
+
+                    fullyConnectedLayer(hidden_layer_size4, "Name", sprintf("fc_4_%d", i), "WeightsInitializer","he", 'BiasInitializer','zeros')
+                    architectures_container.helperELU(sprintf("elu_4_%d", i))
+                    batchNormalizationLayer("Name",sprintf("bn_4_%d",i))
+                    dropoutLayer(drop_rate,"Name",sprintf("dropout_4_%d",i))
+
+                    fullyConnectedLayer(desired_latent_size, "Name", sprintf("fc_latent_%d", i), "WeightsInitializer","narrow-normal")
+                ];
+                
+
+                decoder = [
+                    fullyConnectedLayer(hidden_layer_size4, "Name", sprintf("fc_dec_4_%d", i), "WeightsInitializer","he", 'BiasInitializer','zeros')
+                    architectures_container.helperELU(sprintf("elu_dec_4_%d", i))
+                    batchNormalizationLayer("Name",sprintf("bn_dec_4_%d",i))
+                    dropoutLayer(drop_rate,"Name",sprintf("dropout_dec_4_%d",i))
+
+                    fullyConnectedLayer(hidden_layer_size3, "Name", sprintf("fc_dec_3_%d", i), "WeightsInitializer","he", 'BiasInitializer','zeros')
+                    architectures_container.helperELU(sprintf("elu_dec_3_%d", i))
+                    batchNormalizationLayer("Name",sprintf("bn_dec_3_%d",i))
+                    dropoutLayer(drop_rate,"Name",sprintf("dropout_dec_3_%d",i))
+
+                    fullyConnectedLayer(hidden_layer_size2, "Name", sprintf("fc_dec_2_%d", i), "WeightsInitializer","he", 'BiasInitializer','zeros')
+                    architectures_container.helperELU(sprintf("elu_dec_2_%d", i))
+                    batchNormalizationLayer("Name",sprintf("bn_dec_2_%d",i))
+                    dropoutLayer(drop_rate,"Name",sprintf("dropout_dec_2_%d",i))
+
+                    fullyConnectedLayer(hidden_layer_size1, "Name", sprintf("fc_dec_1_%d", i), "WeightsInitializer","he", 'BiasInitializer','zeros')
+                    architectures_container.helperELU(sprintf("elu_dec_1_%d", i))
+                    batchNormalizationLayer("Name",sprintf("bn_dec_1_%d",i))
+                    dropoutLayer(drop_rate,"Name",sprintf("dropout_dec_1_%d",i))
+
+                    fullyConnectedLayer(input_size, "Name", sprintf("fc_output_%d", i), "WeightsInitializer","narrow-normal")
+                ];
+                net = addLayers(net,encoder);
+                net = addLayers(net,decoder);
+
+                net = connectLayers(net, sprintf("input_%d", i), sprintf("fc_1_%d", i));
+                net = connectLayers(net, sprintf("fc_latent_%d", i), sprintf("fc_dec_4_%d", i));
+
+            end
+
+            % Initialize network
+            net = initialize(net);
+        end
+
+
         function net = buildOptimizedNetwork_compressed_downsampled_sin_freq_less_RES_bn_dr(params)
             % --- Defaults ---
             if ~isfield(params,'input_x'), params.input_x = 800; end

@@ -45,10 +45,12 @@ params.kernel_size1 = 40;% first frequency is  50 kHz, sampling rate is 2e6 Hz, 
 
 %net = architectures_container.buildOptimizedNetwork_compressed_downsampled_sin_freq_paper(params);
 
-net = architectures_container.buildOptimizedNetwork_compressed_downsampled_sin_freq_less_RES_bn_dr(params);
-
+%net = architectures_container.buildOptimizedNetwork_compressed_downsampled_sin_freq_less_RES_bn_dr(params);
+%param.no_fields =  true;
+%net1 = architectures_container.deep_fully_connected_network(param);
+net1 = load('C:\Users\Maria\Documents\Honours Programme\Networks\GAN\results\1p1f_Fully Connected Network\path_1_freq_4_net_loss_3.317124.mat').trained_net;
 % Load the saved network
 %S = load(fullfile(projectRoot, 'results', 'net_only_2025-10-09_17-34-06.mat'));  % adjust file if needed
 %net=S.trained_net;
-disp(class(net));
-deepNetworkDesigner(net);
+disp(class(net1));
+deepNetworkDesigner(net1);

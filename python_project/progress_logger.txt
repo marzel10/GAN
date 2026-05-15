@@ -1,0 +1,41 @@
+7.04:
+CNN training is working (compiling)
+ploting standard panels is working without one common figure
+ploting of the panel 123 doesn't work
+model database in excel doesnt work 
+
+10.04:
+Ploting of the pannel 123 works
+subplots work
+Matlab and python folder created 
+
+18.04:
+Paths fixed (they had to be changed due to the change in folder)
+
+Current direction: looking for the ways to imporve reconstruction in CNN models
+
+20.04: 
+
+
+26.04:
+Maxpooling added
+variable concolution block added 
+reconstruction kind off work, strugle with monotonicity
+
+27.04:
+Upasampling moved above the transposed convolution 
+batch normalization removed at the end of the decoder
+Reconstruction is improved and better monotonicity but the model overfits 
+
+29.04: 
+Cross validation added
+Drop rate added 
+
+9.05: 
+GAN added
+
+
+Plan 14.05: 
+Make a plan until the end of june and agust 
+implement imagining alghoritm (doesnt have to work yet)
+make a presentation about the current approach 

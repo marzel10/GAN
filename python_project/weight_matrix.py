@@ -1,3 +1,11 @@
+'''
+This file:
+- defines the attention_matrix function to compute the attention values based on signal energy for each path pair
+- defines the find_crossings function to determine which paths cross each other based on sensor positions 
+  (if two paths share a sensor, they are not crossing; if they connect different pairs of sensors that intersect in space, they are crossing)
+- defines the adjencency_matrix function to create an adjacency matrix for the graph dataset, where edges exist only between crossing paths and are weighted by the attention values
+- includes a main block that demonstrates how to compute and visualize the attention and adjacency matrices for a
+'''
 from states import states
 import numpy as np
 import matplotlib.pyplot as plt
@@ -12,6 +20,7 @@ def attention_matrix(States: states, state_idx: (int or str), freq_idx: int) -> 
     num_paths = States.num_pair
     num_states = States.num_states
 
+    # shift state_idx if it's a string and panel is 123
     if States.panel_name.startswith("123") and state_idx != ":":
 
         # find in state_start_idx based on the key
@@ -52,10 +61,6 @@ def attention_matrix(States: states, state_idx: (int or str), freq_idx: int) -> 
         attention /= np.max(attention, axis=(1, 2), keepdims=True) - np.min(attention, axis=(1, 2), keepdims=True) 
     else:
         attention = attention - np.min(attention)
-        
-        if np.max(attention) - np.min(attention) < 1e-6:
-            print(f"Warning: Attention value range is very small for state {state_idx}. Check if the energy calculations are correct.")
-            return attention
         attention /= np.max(attention) - np.min(attention) 
 
     if (attention == 0).all():
@@ -75,7 +80,8 @@ def find_crossings():
                 continue
             ua = ((p2_j[0] - p1_j[0]) * (p1_i[1] - p1_j[1]) - (p2_j[1] - p1_j[1]) * (p1_i[0] - p1_j[0])) / denom
             ub = ((p2_i[0] - p1_i[0]) * (p1_i[1] - p1_j[1]) - (p2_i[1] - p1_i[1]) * (p1_i[0] - p1_j[0])) / denom
-            if 0 < ua < 1 and 0 < ub < 1:
+            eps = 1e-9
+            if eps < ua < 1 - eps and eps < ub < 1 - eps:
                 is_crossing[i, j] = True
                 is_crossing[j, i] = True
 

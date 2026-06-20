@@ -1,7 +1,17 @@
+'''
+This file defines the training loop for the GCN model. It includes:
+- the monotonicity loss function to enforce the health index to be monotone with respect to the damage states
+- the train function that sets up the model, loads the datasets, and runs the training loop with optional validation
+- a plot_HI function to visualize the learned health index against the states after training
+
+There is no cross validation implemented yet, only a single validation panel. The training and validation panels can be specified in the train function arguments.
+You can train either with the big latent (the one used for reconstruction) or the sHI latent (the one we want to use for the GCN) by setting the big_latent argument in the train function. The default is False (train with sHI latent).
+'''
+
 import os
 
 from GCN import GraphCNN
-from graph_dataset import Panel_GraphDataset
+from graph_dataset import Panel_GraphDataset, features_GraphDataset
 import torch
 import matplotlib.pyplot as plt
 import torch_geometric
@@ -22,8 +32,10 @@ def monotonicity_loss(HI, state_indices):
     order = torch.argsort(state_indices)        # sort ascending by state
     hi_sorted = hi[order]
     diffs = hi_sorted[1:] - hi_sorted[:-1]     # negative = good (decrease), positive = bad (increase)
-    violations = torch.relu(diffs)             # only penalise decreases
-    return violations.mean()
+    batch_size = diffs.shape[0] + 1
+    diffs = diffs + torch.ones_like(diffs) - torch.randn(batch_size - 1, device=diffs.device) * 0.1
+    violations = torch.mean(diffs ** 2)
+    return violations
 
 
 def train(f=3,val_panel=109,n_epochs=100,batch_size=15,lr=0.01,out_folder="GCN_models",big_latent=False):
@@ -39,6 +51,7 @@ def train(f=3,val_panel=109,n_epochs=100,batch_size=15,lr=0.01,out_folder="GCN_m
     dataset_105 = Panel_GraphDataset(root='graph_data', panel_number=105, freq=f, big_latent=big_latent)
 
     dataset_109 = Panel_GraphDataset(root='graph_data', panel_number=109, freq=f, big_latent=big_latent)
+    
     dict_datasets = {"103": dataset_103, "104": dataset_104, "105": dataset_105, "109": dataset_109}
     val_dataset = dict_datasets[str(val_panel)]
 
@@ -58,20 +71,20 @@ def train(f=3,val_panel=109,n_epochs=100,batch_size=15,lr=0.01,out_folder="GCN_m
             data = data.to(device)
             
             optimizer.zero_grad()
-            out, HI = model(data.x, data.edge_index, data.batch)
+            out, HI = model(data.x, data.edge_index, data.batch, data.edge_weight)
             loss = monotonicity_loss(HI, data.y.squeeze())
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
         avg_loss = total_loss / len(loader)
 
-        # Validation (optional)
+        # Validation 
         model.eval()
         with torch.no_grad():
             total_val_loss = 0
             for val_data in val_loader:
                 val_data = val_data.to(device)
-                out_val, HI_val = model(val_data.x.to(device), val_data.edge_index.to(device), val_data.batch.to(device))
+                out_val, HI_val = model(val_data.x.to(device), val_data.edge_index.to(device), val_data.batch.to(device), val_data.edge_weight.to(device))
                 loss_val = monotonicity_loss(HI_val, val_data.y.squeeze())
                 
                 total_val_loss += loss_val.item()
@@ -100,6 +113,89 @@ def train(f=3,val_panel=109,n_epochs=100,batch_size=15,lr=0.01,out_folder="GCN_m
     else:
         torch.save(model, os.path.join(out_folder, "gcn.pt"))
 
+def train_with_features(f=3,val_panel=109,n_epochs=100,batch_size=15,lr=0.01,out_folder="GCN_models", net_name="gcn_features.pt"):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    num_node_features = 33
+    model = GraphCNN(num_node_features=num_node_features).to(device)
+
+    dataset_103 = features_GraphDataset(root='graph_data', panel_number=103, freq=f)
+    dataset_104 = features_GraphDataset(root='graph_data', panel_number=104, freq=f)
+    dataset_105 = features_GraphDataset(root='graph_data', panel_number=105, freq=f)
+    dataset_109 = features_GraphDataset(root='graph_data', panel_number=109, freq=f)
+
+    dict_datasets = {"103": dataset_103, "104": dataset_104, "105": dataset_105, "109": dataset_109}
+    val_dataset = dict_datasets[str(val_panel)]
+
+    # compute normalisation stats from training panels only
+    all_train_datasets = [dataset for key, dataset in dict_datasets.items() if key != str(val_panel)]
+    all_features = torch.cat([data.x for dataset in all_train_datasets for data in dataset], dim=0)
+    feature_mean = all_features.mean(dim=0)
+    feature_std = all_features.std(dim=0)
+    feature_std[feature_std < 1e-10] = 1.0  # avoid division by zero for constant features
+
+    # apply as a transform so it runs on every __getitem__ call (works with InMemoryDataset)
+    def norm_transform(data):
+        data.x = (data.x - feature_mean) / feature_std
+        return data
+
+    for dataset in dict_datasets.values():
+        dataset.transform = norm_transform
+
+    train_dataset = torch.utils.data.ConcatDataset(all_train_datasets)
+    loader = torch_geometric.loader.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = torch_geometric.loader.DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    loss_history = []
+    val_loss_history = []
+
+    for epoch in range(n_epochs):
+        model.train()
+        total_loss = 0
+        for data in loader:
+            data = data.to(device)
+            
+            optimizer.zero_grad()
+            out, HI = model(data.x, data.edge_index, data.batch, data.edge_weight)
+            loss = monotonicity_loss(HI, data.y.squeeze())
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item()
+        avg_loss = total_loss / len(loader)
+
+        # Validation 
+        model.eval()
+        with torch.no_grad():
+            total_val_loss = 0
+            for val_data in val_loader:
+                val_data = val_data.to(device)
+                out_val, HI_val = model(val_data.x.to(device), val_data.edge_index.to(device), val_data.batch.to(device), val_data.edge_weight.to(device))
+                loss_val = monotonicity_loss(HI_val, val_data.y.squeeze())
+                
+                total_val_loss += loss_val.item()
+            avg_val_loss = total_val_loss / len(val_loader)
+
+        
+        loss_history.append(avg_loss)
+        val_loss_history.append(avg_val_loss)
+        print(f"Epoch: {epoch}, Loss: {avg_loss}, Val Loss: {avg_val_loss}")
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(loss_history, label='Training Loss')
+    plt.plot(val_loss_history, label='Validation Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Monotonicity Loss')
+    plt.title('Training Loss')
+    plt.legend()
+    plt.show()
+
+    out_folder = out_folder
+    if not os.path.exists(out_folder):
+        os.makedirs(out_folder)
+    
+    torch.save(model, os.path.join(out_folder, net_name))
+
+
 def plot_HI(model, dataset):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model.eval()
@@ -109,7 +205,7 @@ def plot_HI(model, dataset):
     with torch.no_grad():
         for data in loader:
             data = data.to(device)
-            _, HI = model(data.x, data.edge_index, data.batch)
+            _, HI = model(data.x, data.edge_index, data.batch, data.edge_weight)
             all_HI.append(HI.cpu())
             all_states.append(data.y.cpu())
     all_HI = torch.cat(all_HI).squeeze().numpy()
@@ -124,12 +220,26 @@ def plot_HI(model, dataset):
     plt.show()
 
 if __name__ == "__main__":
+    features = True
     bl =True
-    train(big_latent=bl, lr=0.0001, n_epochs=500)
-    if bl: 
-        model_name = "gcn_big_latent.pt"
+    if features:
+        model_name = "gcn_features_lin.pt"
+        train_with_features(batch_size=30,net_name=model_name)
+        
+        dataset_123 = features_GraphDataset(root='graph_data', panel_number=123, freq=3)
+        dataset_109 = features_GraphDataset(root='graph_data', panel_number=109, freq=3)
+        dataset_103 = features_GraphDataset(root='graph_data', panel_number=103, freq=3)
+
     else:
-        model_name = "gcn.pt"
+        train(big_latent=bl, lr=0.0001, n_epochs=500)
+        if bl: 
+            model_name = "gcn_big_latent.pt"
+        else:
+            model_name = "gcn.pt"
+        
+        dataset_109 = Panel_GraphDataset(root='graph_data', panel_number=109, freq=3, big_latent=bl)
     model = torch.load(f"GCN_models/{model_name}", weights_only=False)
-    dataset_109 = Panel_GraphDataset(root='graph_data', panel_number=109, freq=3, big_latent=bl)
+    
     plot_HI(model, dataset_109)
+    plot_HI(model, dataset_103)
+    plot_HI(model, dataset_123)

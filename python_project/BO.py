@@ -4,17 +4,48 @@ Bayesian hyperparameter optimization for fc_AE and CNN_AE autoencoders.
 Configure MODE / MODEL_TYPE / MAX_TRIALS at the bottom of the file:
     MODE = "single"  -> optimize one model type (uses MODEL_TYPE)
     MODE = "duo"     -> optimize both fc_AE and CNN_AE, plot side-by-side
+
+Hyperparameters for FC_AE:
+    - hidden_layer_size1: 512 to 2048 (step 256)
+    - hidden_layer_size2: 256 to 1024 (step 128)
+    - hidden_layer_size3: 128 to 512 (step 64)
+    - hidden_layer_size4: 64 to 256 (step 32)
+    - drop_rate: 0.0 to 0.5 (step 0.1)
+    - k_sparse: 5 to 15 (step 1)
+    - batch_size: 4 to 32 (step 4)
+
+Hyperparameters for CNN_AE:
+    - kernel_size1: [50, 20, 10, 5]
+    - kernel_size2: [20, 10, 5, 3]
+    - filter1:      [32, 64, 128]
+    - filter2:      [16, 32, 64]
+    - pool_size1:   [20, 10, 5]
+    - pool_size2:   [10, 5, 2]
+    - batch_size:   [4, 8, 16, 32]
+
+Hardcoded constants:
+    - K_SPARSE_PENALTY_WEIGHT: weight for the k-sparse penalty added to the loss
+    - TRAIN_DS_NAMES, VAL_DS_NAMES, TEST_DS_NAMES: panel splits for training/validation/testing
+    - CV_PANELS: panels used for cross-validation (leave-one-out)
+    - EPOCHS_PER_FOLD: number of epochs to train in each fold of cross-validation
+    - MODEL_DB_DIR: directory to save the model database Excel file
+    - learning_rate: learning rate for training the models (currently fixed at 0.001)
+    - loss_weights: weights for the reconstruction loss and latent loss (currently fixed at 0.5 and 1.0)
+    - Test set is always 123
+
+At the end train and validation datasets are assumed and latent representations and signal reconstructions are ploted. 
+The final reported loss is the mean of the penalized validation loss across the cross-validation folds.
+
 """
 
 import gc
-import gc
-import io
 import os
 import sys
 from functools import partial
 from pathlib import Path
 import psutil, os
 
+# for checking memory usage during optimization
 def log_mem(tag=""):
     rss = psutil.Process(os.getpid()).memory_info().rss
     print(f"[MEM {tag}] {rss / 1e9:.2f} GB")
@@ -43,17 +74,19 @@ K_SPARSE_PENALTY_WEIGHT = 0.1
 
 # HP columns reported in sensitivity / coverage plots, per model type.
 HP_COLS = {
+    # Fully connected AE has the following HP
     "fc_AE": [
         "hidden_layer_size1", "hidden_layer_size2", "hidden_layer_size3",
         "hidden_layer_size4", "drop_rate", "k_sparse", "batch_size",
     ],
+    # CNN AE has the following HP
     "CNN_AE": [
         "kernel_size1", "kernel_size2", "pool_size1", "pool_size2",
         "filter1", "filter2", "batch_size",
     ],
 }
 
-# Train / val / test split — single source of truth.
+# Train / val / test split — these can be used if you don't want to do cross-validation
 TRAIN_DS_NAMES = ["103", "104", "105"]
 VAL_DS_NAMES = ["109"]
 TEST_DS_NAMES = [
@@ -159,6 +192,7 @@ class MyTuner(kt.BayesianOptimization):
         fold_val, fold_val_pen = [], []
         fold_tr,  fold_tr_pen  = [], []
 
+        # run cross-validation folds for every panel in the cv_panels
         for fold_idx, val_panel in enumerate(self.cv_panels):
 
             log_mem(f"trial {trial.trial_id} fold {fold_idx} before prep")
@@ -321,6 +355,8 @@ def run_bayesian_optimization(path_i, freq, model_type="fc_AE", max_trials=30, o
     Returns a dict with:
         model_type, best_model, best_params,
         train_h, val_h, running_best, df, out_dir
+
+
     """
     if model_type == "fc_AE":
         model_building_function = build_model

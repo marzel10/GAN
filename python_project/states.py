@@ -1,3 +1,19 @@
+'''
+This file defines the states class for loading and accessing the .mat files containing the panel states. 
+It provides methods to extract:
+ - amplitude
+ - benchmark amplitude
+ - time
+ - signal energy 
+
+Other functions include:
+    - size_summary: prints the number of states, frequencies, and pair indices in the loaded panel
+    - plot: plots the amplitude and benchmark amplitude over time
+    - dt: calculates the time step between samples based on the time vector in the .mat file
+
+Example of usage is in the states_check.py 
+'''
+
 from scipy.io import loadmat
 import h5py
 import matplotlib.pyplot as plt
@@ -151,15 +167,29 @@ class states:
     def dt(self):
         return self.states[0,0]['Frequency'][0,0]['Pair_idx'][0,0]['Time'][1] - self.states[0,0]['Frequency'][0,0]['Pair_idx'][0,0]['Time'][0]
 
-    def plot(self, s_idx, freq, p_idx):
+    def plot(self, s_idx, freq, p_idx, save_path=None):
         amp = self.amplitude(s_idx, freq, p_idx)
         benchmark_amp = self.benchmark_amplitude(s_idx, freq, p_idx)
         time = self.time(s_idx, freq, p_idx)
 
-        plt.plot(time, amp, label='Amplitude')
-        plt.plot(time, benchmark_amp, label='Benchmark Amplitude')
+        #square figure
+        plt.figure(figsize=(6, 6))
+        plt.plot(time[100:1000], amp[100:1000], label='Amplitude')
+        plt.plot(time[100:1000], benchmark_amp[100:1000], label='Benchmark Amplitude')
         plt.title(f'State {s_idx}, Frequency {freq}, Pair Index {p_idx}')
         plt.xlabel('Time')
         plt.ylabel('Amplitude')
         plt.legend()
-        plt.show()
+        if save_path is not None:
+            plt.savefig(save_path, format='svg', bbox_inches='tight')
+       
+
+if __name__ == "__main__":
+    # Example usage
+    mat_file = r"C:\Users\Maria\Documents\Honours Programme\Networks\GAN\python_project\data\States_103.mat"
+    panel_states = states(mat_file)
+    dt = panel_states.dt()
+    print(f"Time step (dt): {dt}")
+    print(f"Total time of the signal: {dt * 2000}")  # Assuming 2000 samples as per the original code
+    panel_states.size_summary()
+    panel_states.plot(s_idx=0, freq=0, p_idx=0)

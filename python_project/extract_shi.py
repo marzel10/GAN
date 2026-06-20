@@ -1,13 +1,29 @@
+'''
+This file:
+- defines extract_shi function 
+- creates raw data files with the latent values that can be used in the graph dataset
+'''
 import os
-
 import torch
-from states_check import prepare_simple_dataset
 from fc_AE import KSparse
 import numpy as np
 import tensorflow as tf
+from states_check import prepare_simple_dataset
 
 def extract_shi(folders, freq, dataset, GAN_dir=r"C:\Users\Maria\Documents\Honours Programme\Networks\GAN"):
-    
+    '''
+    Extract sHI values from the trained autoencoder models for a given dataset and frequency.
+    inputs:
+    - folders: list of folder names within GAN_dir where the models are stored (usually models after bayesian optimization)
+    - freq: frequency index to extract sHI for (e.g. 3)
+    - dataset: dataset/panel number to extract sHI for (e.g. '104')
+    - GAN_dir: base directory where the folders are located
+
+    outputs:
+    - latents_all: list of numpy arrays, each containing the sHI values for a path (shape: n_states x 1)
+    - path_labels: list of path indices corresponding to each entry in latents_all
+    - big_latent_all: list of numpy arrays, each containing the big latent values (the one used for reconstruction) for all paths and states 
+    '''
     folders = [os.path.join(GAN_dir, f) for f in folders]
     latents_all = []
     path_labels = []
@@ -52,19 +68,7 @@ def extract_shi(folders, freq, dataset, GAN_dir=r"C:\Users\Maria\Documents\Honou
 
 if __name__ == "__main__":
 
-    folders = [
-        "Multi_path_2026_05_02-22_14_20",
-        "Multi_path_2026_05_03-09_15_32",
-        "Multi_path_2026_05_03-15_06_17",
-        "Multi_path_2026_05_04-00_57_31",
-        "Multi_path_2026_05_04-08_54_04",
-        "Multi_path_2026_05_05-11_32_40",
-        "Multi_path_2026_05_05-15_51_25",
-        "Multi_path_2026_05_06-01_03_28",
-        "Multi_path_2026_05_06-10_41_54",
-        "Multi_path_2026_05_06-21_24_48",
-        "Multi_path_2026_05_07-16_28_36",
-    ]
+    folders = ["Model_for_every_path"]
     datasets = ['103', '104', '105', '109','123']
    
     freq = 3

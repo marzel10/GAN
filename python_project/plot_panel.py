@@ -1,3 +1,13 @@
+'''
+This file defines functions to visualize the PZT panel, including:
+- plot_panel_with_paths: draw the panel with sensors, damage point, and optionally active paths
+- animate_panel_sHI: create an animation of the panel with path colours representing sHI values across states 
+colors are only on the paths so there is no proper heatmap of the panel, but it gives a visual representation of how the sHI values change across states and paths.
+
+The panel geometry and sensor positions are defined as constants at the top of the file, matching the experimental setup.
+
+'''
+
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
@@ -33,102 +43,6 @@ DAMAGE_POINTS = {
     123: np.array([[0.0825-0.03,0.045],[0.0825,0.045],[0.0825-0.03,0.045+0.03],[0.0825,0.045+0.03]]),   # square debond surface
 }
 
-
-def plot_panel_with_paths(panel_number, path_indices=None, ax=None, title=None):
-    """
-    Draw the PZT panel with sensor positions, damage point, and active paths.
-
-    Parameters
-    ----------
-    panel_number : int
-        103, 104, 105, or 109.  Controls which damage point is shown.
-    path_indices : list[int] | None
-        1-indexed path numbers (1-28).  Each path is a sensor pair; they are
-        drawn as coloured lines on the panel.  Pass None to skip path lines.
-    ax : matplotlib.axes.Axes | None
-        Axes to draw into.  A new figure is created when None.
-    title : str | None
-        Axes title.  Defaults to "Panel <number>".
-
-    Returns
-    -------
-    fig, ax : matplotlib Figure and Axes
-    """
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(5, 7))
-    else:
-        fig = ax.get_figure()
-
-    # --- panel boundary ---
-    rect = mpatches.Rectangle(
-        (0, 0), PANEL_W, PANEL_H,
-        linewidth=1.5, edgecolor="black", facecolor="whitesmoke", zorder=0,
-    )
-    ax.add_patch(rect)
-
-    # --- active paths ---
-    if path_indices:
-        cmap = plt.cm.tab20
-        for k, path_idx in enumerate(path_indices):
-            if not (1 <= path_idx <= 28):
-                continue
-            s1, s2 = SENSOR_PAIRS[path_idx - 1]
-            p1 = SENSOR_POSITIONS[s1 - 1]
-            p2 = SENSOR_POSITIONS[s2 - 1]
-            colour = cmap(k % 20)
-            ax.plot(
-                [p1[0], p2[0]], [p1[1], p2[1]],
-                color=colour, linewidth=1.2, alpha=0.75, zorder=1,
-                label=f"Path {path_idx} (S{s1}-S{s2})",
-            )
-
-    # --- sensors ---
-    ax.scatter(
-        SENSOR_POSITIONS[:, 0], SENSOR_POSITIONS[:, 1],
-        s=60, color="steelblue", zorder=3, label="Sensors",
-    )
-    for i, (x, y) in enumerate(SENSOR_POSITIONS, start=1):
-        ax.text(
-            x, y + 0.006, str(i),
-            ha="center", va="bottom", fontsize=8, color="steelblue", zorder=4,
-        )
-
-    # --- damage point ---
-    dp = DAMAGE_POINTS.get(panel_number)
-    if dp is not None and dp.ndim == 1:
-        ax.scatter(
-            dp[0], dp[1],
-            s=120, color="red", marker="X", zorder=5, label="Impact",
-        )
-        ax.text(
-            dp[0], dp[1] + 0.008, "Impact",
-            ha="center", va="bottom", fontsize=8, color="red", zorder=6,
-        )
-    elif dp is not None and dp.ndim == 2:
-        # Mark debond area using dashed red rectangle
-        x_min, y_min = dp.min(axis=0)
-        x_max, y_max = dp.max(axis=0)
-        width, height = x_max - x_min, y_max - y_min
-        rect = mpatches.Rectangle(
-            (x_min, y_min), width, height,
-            linewidth=1.5, edgecolor="red", facecolor="none", linestyle="--", zorder=5,
-            label="Debond area",
-        )
-        ax.add_patch(rect)
-
-    # --- axes formatting ---
-    margin = 0.01
-    ax.set_xlim(-margin, PANEL_W + margin)
-    ax.set_ylim(-margin, PANEL_H + margin)
-    ax.invert_xaxis()   # match MATLAB XDir='reverse'
-    ax.set_aspect("equal")
-    ax.set_xlabel("x (m)")
-    ax.set_ylabel("y (m)")
-    ax.set_title(title or f"Panel {panel_number}")
-    if path_indices:
-        ax.legend(fontsize=7, loc="upper left", bbox_to_anchor=(1.02, 1), borderaxespad=0)
-
-    return fig, ax
 
 
 def _draw_static_panel(ax, panel_number):

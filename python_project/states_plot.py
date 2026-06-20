@@ -1,11 +1,11 @@
 import matplotlib.pyplot as plt
-from python_project.states import states
+from states import states
 
 # Load panels once
-st_103 = states("data/States_103.mat")
-st_104 = states("data/States_104.mat")
-st_105 = states("data/States_105.mat")
-st_109 = states("data/States_109.mat")
+st_103 = states(r"C:\Users\Maria\Documents\Honours Programme\Networks\GAN\python_project\data\States_103.mat")
+st_104 = states(r"C:\Users\Maria\Documents\Honours Programme\Networks\GAN\python_project\data\States_104.mat")
+st_105 = states(r"C:\Users\Maria\Documents\Honours Programme\Networks\GAN\python_project\data\States_105.mat")
+st_109 = states(r"C:\Users\Maria\Documents\Honours Programme\Networks\GAN\python_project\data\States_109.mat")
 
 
 state_idx = [0, 11, 20, 26]
@@ -40,6 +40,6 @@ for st_idx in state_idx:
 
 plt.clf()
 
-st_123_41 = states("data/States_123_41.mat")
-st_123_41.plot(st_123_41.num_states - 1, 3, 2)
+st_123_41 = states(r"C:\Users\Maria\Documents\Honours Programme\Networks\GAN\python_project\data\States_123_41.mat")
+st_123_41.plot(st_123_41.num_states - 1, 3, 2, save_path="state_123_41.svg")
 plt.show()

@@ -1,4 +1,10 @@
 
+'''
+This file:
+- defines the plot functions for visualizing the reconstructions and latent values (sHI) from the autoencoder models.
+- includes a main block that demonstrates how to use these functions to plot the reconstructions and sHI values for different datasets and states, with options to save the plots.
+- defines a PlotContext dataclass to hold the datasets, targets, RULs, and state information for easy access within the plotting functions.
+'''
 from states_check import prepare_datastores
 from fc_AE import KSparse
 import matplotlib.pyplot as plt
@@ -20,6 +26,7 @@ class PlotContext:
     States_dict: Dict[str, Any]
 
 def plot_standard(model, panel_dataset, state_idx, ctx: PlotContext, name: str, ax_rec_spec=None, ax_lat_spec=None):
+    '''Plot reconstruction and sHI for a standard panel (non-123)'''
     States = ctx.States_dict[name]
     sHI = []
     sample_offset = 0
@@ -30,10 +37,14 @@ def plot_standard(model, panel_dataset, state_idx, ctx: PlotContext, name: str, 
     plots_were_passed = (ax_rec_spec is not None and ax_lat_spec is not None)
 
     for i, (x, y) in enumerate(panel_dataset):
-        reconstruction, latent = model.predict(x)
+        pred = model.predict(x)
         x_arr = np.asarray(x)
-        reconstruction_arr = np.asarray(reconstruction)
-        latent_arr = np.asarray(latent)
+        p0, p1 = np.asarray(pred[0]), np.asarray(pred[1])
+        # sHI output is always (batch, 1); reconstruction is always larger
+        if p0[0].size < p1[0].size:
+            latent_arr, reconstruction_arr = p0, p1
+        else:
+            reconstruction_arr, latent_arr = p0, p1
         batch_size = int(latent_arr.shape[0])
         batch_states = np.asarray(States[sample_offset:sample_offset + batch_size])
         
@@ -89,6 +100,7 @@ def plot_standard(model, panel_dataset, state_idx, ctx: PlotContext, name: str, 
 
 
 def plot_123(model, panel123_datasets, state_idx, ctx: PlotContext, names: List[str], ax_rec_spec=None, ax_lat_spec=None):
+    '''Plot reconstruction and sHI for the panel 123 datasets together'''
     sHI = []
     states = []
     benchmark = None
@@ -102,10 +114,14 @@ def plot_123(model, panel123_datasets, state_idx, ctx: PlotContext, names: List[
         ds_name = names[j]
         
         for i, (x, y) in enumerate(ds):
-            reconstruction, latent = model.predict(x)
+            pred = model.predict(x)
             x_arr = np.asarray(x)
-            reconstruction_arr = np.asarray(reconstruction)
-            latent_arr = np.asarray(latent)
+            p0, p1 = np.asarray(pred[0]), np.asarray(pred[1])
+            # sHI output is always (batch, 1); reconstruction is always larger
+            if p0[0].size < p1[0].size:
+                latent_arr, reconstruction_arr = p0, p1
+            else:
+                reconstruction_arr, latent_arr = p0, p1
             batch_size = int(latent_arr.shape[0])
             
             if benchmark is None:
@@ -170,6 +186,11 @@ def plot_sHI_vs_RUL(
     show=False,
     plot_together=True
 ):
+    '''Major function to plot sHI vs RUL for all datasets of a given type (train/validation/test). 
+    Can save the plots and show them. I
+    f plot_together is True, all datasets of the same type will be plotted in the same figure with subplots; 
+    if False, each dataset will be plotted in a separate figure.
+    '''
     if not os.path.exists(dir):
         os.makedirs(dir)
 

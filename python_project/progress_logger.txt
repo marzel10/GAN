@@ -39,3 +39,30 @@ Plan 14.05:
 Make a plan until the end of june and agust 
 implement imagining alghoritm (doesnt have to work yet)
 make a presentation about the current approach 
+
+15.05: 
+flow chart of the files and folders done (some files deleted)
+imagining alghoritm debugged and finished (panel 123 functionallity added)
+Gan now takes into account the weigths of the edges 
+
+27.05:
+Features prepare datastore done (for fc AE)
+Graph features datastore done 
+Training on the features datastore for the graphs done, validation results not monotonic 
+
+31.05: 
+
+7.06:
+Work on improvement of the reconstruction and monotonocity of signle path AE 
+- monotonocity loss -> worse reconstruction (much worse)
+- batch normalization -> less overfitting better resutlts 
+- mse_excl_benchmark -> higher mean recon loss, worse signal reconsturction
+- full connected network is better at reconstruction 
+- bigger kernels considerably change the performance of CNN (signal should be analised globaly)
+
+Single path features AE: 
+- slower convergence than unprocessed signal 
+- if benchamrk is included using fully connected network it is included by a difference between the signal and benchmark 
+- increasing learning rate helped with the reconstruction quality 
+- the monotonocity loss value remains the same whether or  not the monotonocity weight is higher than 0
+- Making the const in the loss function 1 (instead of 10) lowers the difference between training and validation but does not change the fact that the network is not learning 

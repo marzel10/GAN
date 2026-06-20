@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+venv/
+.venv/
+*.egg-info/
+
+# MATLAB
+*.asv
+*.m~
+*.mex*
+*.mlapp~
+slprj/
+
+# Trained model binaries
+*.h5
+*.pt
+*.mat
+*.npy
+
+# Output directories
+Model_for_every_path/
+GCN_models/
+features_cache/
+graph_data/
+matlab_project/results/
+python_project/model_train_results/
+model_train_results/
+results_hype_tweaked/
+python_project/beta_paper
+
+# Generated plots and animations
+*.png
+*.gif
+*.fig
+*.svg
+
+# Articles
+.pdf
+
+# Logs and temp files
+progress_logger.txt
+git-status.txt
+*.log
+
+# Excel outputs
+model_database.xlsx
+python_project/model_database.xlsx
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Memory system (Claude Code internal)
+memory/

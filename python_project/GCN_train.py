@@ -16,27 +16,73 @@ import torch
 import matplotlib.pyplot as plt
 import torch_geometric
 
+def monotonicity_loss(HI, _state_indices):
+    y_flat = HI.reshape(-1)
+    diff = y_flat[1:] - y_flat[:-1]
+    diff = diff + 10.0
+    diff = diff ** 2
+    baseline = 10 ** 2 * diff.shape[0]
+    return diff.sum() - baseline
 
-def monotonicity_loss(HI, state_indices):
-    """
-    Penalises violations of monotonic increase in HI across damage states.
 
-    HI:            (batch_size, 1) — one health index per graph in the batch.
-    state_indices: (batch_size,)   — integer damage-state index for each graph.
 
-    Strategy: sort HI by state index, then penalise any decrease between
-    consecutive states.  Only violations (negative differences) contribute to
-    the loss, so the network is free to be monotone without penalty.
-    """
-    hi = HI.squeeze(1)                          # (batch_size,)
-    order = torch.argsort(state_indices)        # sort ascending by state
-    hi_sorted = hi[order]
-    diffs = hi_sorted[1:] - hi_sorted[:-1]     # negative = good (decrease), positive = bad (increase)
-    batch_size = diffs.shape[0] + 1
-    diffs = diffs + torch.ones_like(diffs) - torch.randn(batch_size - 1, device=diffs.device) * 0.1
-    violations = torch.mean(diffs ** 2)
-    return violations
+def combined_monotonicity_loss(HI, out):
+    # HI:  (batch_size, 1)          — graph-level health index
+    # out: (batch_size * num_paths, 1) — per-node outputs, ordered by graph then node
+    batch_size = HI.shape[0]
+    num_paths = out.shape[0] // batch_size          # 28 for a 28-node graph
+    path_out = out.reshape(batch_size, num_paths)   # (batch_size, 28)
 
+    global_loss = monotonicity_loss(HI, None)
+    path_loss = sum(monotonicity_loss(path_out[:, i], None) for i in range(num_paths))
+    return global_loss + path_loss
+
+def combined_path_loss(HI, out):
+    # HI:  (batch_size, 1)          — graph-level health index
+    # out: (batch_size * num_paths, 1) — per-node outputs, ordered by graph then node
+    batch_size = HI.shape[0]
+    num_paths = out.shape[0] // batch_size          # 28 for a 28-node graph
+    path_out = out.reshape(batch_size, num_paths)   # (batch_size, 28)
+
+    
+    path_loss = sum(monotonicity_loss(path_out[:, i], None) for i in range(num_paths))
+    return path_loss
+
+def plot_training_history(hist_dict, nr_epochs):
+
+    epochs = range(1, nr_epochs + 1)
+    loss_history = hist_dict['loss_history']
+    val_loss_history = hist_dict['val_loss_history']
+    global_loss_history = hist_dict['global_loss_history']
+    global_val_loss_history = hist_dict['global_val_loss_history']
+    path_loss_history = hist_dict['path_loss_history']
+    path_val_loss_history = hist_dict['path_val_loss_history']
+
+
+    fig, ax = plt.subplots(1, 3, figsize=(18, 5))
+    ax[0].plot(epochs, loss_history[:nr_epochs], label='Training Loss')
+    ax[0].plot(epochs, val_loss_history[:nr_epochs], label='Validation Loss')
+    ax[0].set_xlabel('Epoch')
+    ax[0].set_ylabel('Total Loss')
+    ax[0].set_title('Total Loss')
+    ax[0].legend()  
+
+    ax[1].plot(epochs, global_loss_history[:nr_epochs], label='Training Global Loss')
+    ax[1].plot(epochs, global_val_loss_history[:nr_epochs], label='Validation Global Loss')
+    ax[1].set_xlabel('Epoch')
+    ax[1].set_ylabel('Global Loss')
+    ax[1].set_title('Global Loss')
+    ax[1].legend()
+
+    ax[2].plot(epochs, path_loss_history[:nr_epochs], label='Training Path Loss')
+    ax[2].plot(epochs, path_val_loss_history[:nr_epochs], label='Validation Path Loss')
+    ax[2].set_xlabel('Epoch')
+    ax[2].set_ylabel('Path Loss')
+    ax[2].set_title('Path Loss')
+    ax[2].legend()
+
+    plt.tight_layout()
+    plt.show()
 
 def train(f=3,val_panel=109,n_epochs=100,batch_size=15,lr=0.01,out_folder="GCN_models",big_latent=False):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -61,48 +107,81 @@ def train(f=3,val_panel=109,n_epochs=100,batch_size=15,lr=0.01,out_folder="GCN_m
     val_loader = torch_geometric.loader.DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    loss_history = []
-    val_loss_history = []
+    loss_history = torch.zeros(n_epochs)
+    global_loss_history = torch.zeros(n_epochs)
+    path_loss_history = torch.zeros(n_epochs)
+    val_loss_history = torch.zeros(n_epochs)
+    global_val_loss_history = torch.zeros(n_epochs)
+    path_val_loss_history = torch.zeros(n_epochs)
+
+    epochs_done = 0
 
     for epoch in range(n_epochs):
         model.train()
         total_loss = 0
+        total_global_loss = 0
+        total_path_loss = 0
         for data in loader:
             data = data.to(device)
-            
+
             optimizer.zero_grad()
             out, HI = model(data.x, data.edge_index, data.batch, data.edge_weight)
-            loss = monotonicity_loss(HI, data.y.squeeze())
+
+            global_loss = monotonicity_loss(HI, None)
+            path_loss = combined_path_loss(HI, out)
+            loss  = combined_monotonicity_loss(HI, out)
+            #loss = global_loss + path_loss
+
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
+            total_global_loss += global_loss
+            total_path_loss += path_loss
         avg_loss = total_loss / len(loader)
+        avg_global_loss = total_global_loss / len(loader)
+        avg_path_loss = total_path_loss / len(loader)
 
-        # Validation 
+        # Validation
         model.eval()
         with torch.no_grad():
             total_val_loss = 0
+            total_global_val_loss = 0
+            total_path_val_loss = 0
             for val_data in val_loader:
                 val_data = val_data.to(device)
                 out_val, HI_val = model(val_data.x.to(device), val_data.edge_index.to(device), val_data.batch.to(device), val_data.edge_weight.to(device))
-                loss_val = monotonicity_loss(HI_val, val_data.y.squeeze())
-                
+
+                global_val_loss = monotonicity_loss(HI_val, None)
+                path_val_loss = combined_path_loss(HI_val, out_val)
+                #loss_val = global_val_loss + path_val_loss
+                loss_val = combined_monotonicity_loss(HI_val, out_val)
+
                 total_val_loss += loss_val.item()
+                total_global_val_loss += global_val_loss
+                total_path_val_loss += path_val_loss
             avg_val_loss = total_val_loss / len(val_loader)
+            avg_global_val_loss = total_global_val_loss / len(val_loader)
+            avg_path_val_loss = total_path_val_loss / len(val_loader)
 
-        
-        loss_history.append(avg_loss)
-        val_loss_history.append(avg_val_loss)
+        loss_history[epoch] = avg_loss
+        global_loss_history[epoch] = avg_global_loss
+        path_loss_history[epoch] = avg_path_loss
+        global_val_loss_history[epoch] = avg_global_val_loss
+        path_val_loss_history[epoch] = avg_path_val_loss
+        val_loss_history[epoch] = avg_val_loss
         print(f'Epoch {epoch+1}, Loss: {avg_loss:.4f}, Val Loss: {avg_val_loss:.4f}')
+        epochs_done += 1
 
-    plt.figure(figsize=(10, 5))
-    plt.plot(loss_history, label='Training Loss')
-    plt.plot(val_loss_history, label='Validation Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('Monotonicity Loss')
-    plt.title('Training Loss')
-    plt.legend()
-    plt.show()
+    history_dict = {
+        'loss_history': loss_history,
+        'global_loss_history': global_loss_history,
+        'path_loss_history': path_loss_history,
+        'val_loss_history': val_loss_history,
+        'global_val_loss_history': global_val_loss_history,
+        'path_val_loss_history': path_val_loss_history}
+
+    plot_training_history(history_dict, epochs_done)
+   
 
     out_folder = out_folder
     if not os.path.exists(out_folder):
@@ -146,54 +225,90 @@ def train_with_features(f=3,val_panel=109,n_epochs=100,batch_size=15,lr=0.01,out
     val_loader = torch_geometric.loader.DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    loss_history = []
-    val_loss_history = []
+    loss_history = torch.zeros(n_epochs)
+    global_loss_history = torch.zeros(n_epochs)
+    path_loss_history = torch.zeros(n_epochs)
+    val_loss_history = torch.zeros(n_epochs)
+    global_val_loss_history = torch.zeros(n_epochs)
+    path_val_loss_history = torch.zeros(n_epochs)
+
+    epochs_done = 0
+
 
     for epoch in range(n_epochs):
         model.train()
         total_loss = 0
+        total_global_loss = 0
+        total_path_loss = 0
         for data in loader:
             data = data.to(device)
             
             optimizer.zero_grad()
             out, HI = model(data.x, data.edge_index, data.batch, data.edge_weight)
-            loss = monotonicity_loss(HI, data.y.squeeze())
+
+            global_loss = monotonicity_loss(HI, None)
+            path_loss = combined_path_loss(HI, out)
+            #loss = global_loss + path_loss
+            loss = combined_monotonicity_loss(HI, out)
+
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
+            total_global_loss += global_loss
+            total_path_loss += path_loss
         avg_loss = total_loss / len(loader)
+        avg_global_loss = total_global_loss / len(loader)
+        avg_path_loss = total_path_loss / len(loader)
 
         # Validation 
         model.eval()
         with torch.no_grad():
             total_val_loss = 0
+            total_global_val_loss = 0
+            total_path_val_loss = 0
             for val_data in val_loader:
                 val_data = val_data.to(device)
                 out_val, HI_val = model(val_data.x.to(device), val_data.edge_index.to(device), val_data.batch.to(device), val_data.edge_weight.to(device))
-                loss_val = monotonicity_loss(HI_val, val_data.y.squeeze())
                 
+
+                global_val_loss = monotonicity_loss(HI_val, None)
+                path_val_loss = combined_path_loss(HI_val, out_val)
+                #loss_val = global_val_loss + path_val_loss
+                loss_val = combined_monotonicity_loss(HI_val, out_val)
+
+
                 total_val_loss += loss_val.item()
+                total_global_val_loss += global_val_loss
+                total_path_val_loss += path_val_loss
             avg_val_loss = total_val_loss / len(val_loader)
-
+            avg_global_val_loss = total_global_val_loss / len(val_loader)
+            avg_path_val_loss = total_path_val_loss / len(val_loader)
         
-        loss_history.append(avg_loss)
-        val_loss_history.append(avg_val_loss)
-        print(f"Epoch: {epoch}, Loss: {avg_loss}, Val Loss: {avg_val_loss}")
+        loss_history[epoch] = avg_loss
+        val_loss_history[epoch] = avg_val_loss
+        global_loss_history[epoch] = avg_global_loss
+        path_loss_history[epoch] = avg_path_loss
+        global_val_loss_history[epoch] = avg_global_val_loss
+        path_val_loss_history[epoch] = avg_path_val_loss
 
-    plt.figure(figsize=(10, 5))
-    plt.plot(loss_history, label='Training Loss')
-    plt.plot(val_loss_history, label='Validation Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('Monotonicity Loss')
-    plt.title('Training Loss')
-    plt.legend()
-    plt.show()
+        print(f"Epoch: {epoch}, Loss: {avg_loss}, Val Loss: {avg_val_loss}")
+        epochs_done += 1
+
+    history_dict = {
+        'loss_history': loss_history,
+        'global_loss_history': global_loss_history,
+        'path_loss_history': path_loss_history,
+        'val_loss_history': val_loss_history,
+        'global_val_loss_history': global_val_loss_history,
+        'path_val_loss_history': path_val_loss_history}
+
+    plot_training_history(history_dict, epochs_done)
 
     out_folder = out_folder
     if not os.path.exists(out_folder):
         os.makedirs(out_folder)
     
-    torch.save(model, os.path.join(out_folder, net_name))
+    torch.save({'model': model, 'feature_mean': feature_mean, 'feature_std': feature_std}, os.path.join(out_folder, net_name))
 
 
 def plot_HI(model, dataset):
@@ -215,7 +330,33 @@ def plot_HI(model, dataset):
     plt.scatter(all_states, all_HI, alpha=0.7)
     plt.xlabel('Damage State Index')
     plt.ylabel('Health Index (HI)')
-    plt.title('Learned Health Index vs Damage State')
+    plt.title(f'Learned Health Index vs Damage State Panel {dataset.panel_number}')
+    plt.grid(True)
+    plt.show()
+
+def plot_sHI(model, dataset, path_idx):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model.eval()
+    loader = torch_geometric.loader.DataLoader(dataset, batch_size=15, shuffle=False)
+    all_sHI = []
+    all_states = []
+    with torch.no_grad():
+        for data in loader:
+            data = data.to(device)
+            out, _ = model(data.x, data.edge_index, data.batch, data.edge_weight)
+            # out shape: (batch_size * num_paths, 1)
+            num_paths = 28
+            path_out = out.reshape(-1, num_paths)  # shape: (batch_size, num_paths)
+            sHI_for_path = path_out[:, path_idx]    # shape: (batch_size,)
+            all_sHI.append(sHI_for_path.cpu())
+            all_states.append(data.y.cpu())
+    all_sHI = torch.cat(all_sHI).squeeze().numpy()
+    all_states = torch.cat(all_states).squeeze().numpy()
+    plt.figure(figsize=(10, 5))
+    plt.scatter(all_states, all_sHI, alpha=0.7)
+    plt.xlabel('Damage State Index')
+    plt.ylabel(f'sHI for Path {path_idx + 1}')
+    plt.title(f'Learned sHI vs Damage State Panel {dataset.panel_number} Path {path_idx + 1}')
     plt.grid(True)
     plt.show()
 
@@ -224,22 +365,41 @@ if __name__ == "__main__":
     bl =True
     if features:
         model_name = "gcn_features_lin.pt"
-        train_with_features(batch_size=30,net_name=model_name)
+        train_with_features(batch_size=30,net_name=model_name, n_epochs=400, lr=0.001)
         
         dataset_123 = features_GraphDataset(root='graph_data', panel_number=123, freq=3)
         dataset_109 = features_GraphDataset(root='graph_data', panel_number=109, freq=3)
         dataset_103 = features_GraphDataset(root='graph_data', panel_number=103, freq=3)
 
     else:
-        train(big_latent=bl, lr=0.0001, n_epochs=500)
+        train(big_latent=bl, lr=0.0001, n_epochs=1000)
         if bl: 
             model_name = "gcn_big_latent.pt"
         else:
             model_name = "gcn.pt"
         
         dataset_109 = Panel_GraphDataset(root='graph_data', panel_number=109, freq=3, big_latent=bl)
-    model = torch.load(f"GCN_models/{model_name}", weights_only=False)
-    
+        dataset_103 = Panel_GraphDataset(root='graph_data', panel_number=103, freq=3, big_latent=bl)
+        dataset_123 = Panel_GraphDataset(root='graph_data', panel_number=123, freq=3, big_latent=bl)
+
+    bundle = torch.load(f"GCN_models/{model_name}", weights_only=False)
+    print(f"Bundle keys: {bundle.keys() if isinstance(bundle, dict) else 'Not a dict'}")
+    if isinstance(bundle, dict):
+        model = bundle['model']
+        feature_mean = bundle['feature_mean']
+        feature_std  = bundle['feature_std']
+        def norm_transform(data):
+            data.x = (data.x - feature_mean) / feature_std
+            return data
+        for ds in [dataset_109, dataset_103, dataset_123]:
+            ds.transform = norm_transform
+    else:
+        model = bundle
+
     plot_HI(model, dataset_109)
     plot_HI(model, dataset_103)
     plot_HI(model, dataset_123)
+
+    plot_sHI(model, dataset_109, path_idx=0)
+    plot_sHI(model, dataset_103, path_idx=0)
+    plot_sHI(model, dataset_123, path_idx=0)    

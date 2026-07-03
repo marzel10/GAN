@@ -21,8 +21,8 @@ from features_extractor import FeaturesExtractor
 from pathlib import Path
 
 
-NR_SAVED_STATES ={"123_1": 7, "123_2": 7, "123_31": 16, "123_32": 13, "123_41": 10, "123_42": 10, "123_43": 10, "123_44": 10}
-STATE_START_INDICES = {"123_1": 0, "123_2": 7, "123_31": 14, "123_32": 30, "123_41": 43, "123_42": 53, "123_43": 63, "123_44": 73}
+NR_SAVED_STATES ={"123_1": 16, "123_2": 7, "123_31": 16, "123_32": 13, "123_41": 10, "123_42": 10, "123_43": 10, "123_44": 10}
+STATE_START_INDICES = {"123_1": 0, "123_2": 16, "123_31": 23, "123_32": 39, "123_41": 52, "123_42": 62, "123_43": 72, "123_44": 82}
 class Panel_GraphDataset(InMemoryDataset):
     def __init__(self, root, panel_number,freq, big_latent=False, transform=None, pre_transform=None):
         self.panel_number = panel_number
@@ -74,7 +74,7 @@ class Panel_GraphDataset(InMemoryDataset):
                     for sp in NR_SAVED_STATES.keys():
                         start_idx = STATE_START_INDICES[sp]
                         end_idx = start_idx + NR_SAVED_STATES[sp]
-                        if start_idx <= state <= end_idx:
+                        if start_idx <= state < end_idx:
                             subpanel = sp
                             print(f"State {state} belongs to subpanel {subpanel}")
                             break
@@ -83,7 +83,7 @@ class Panel_GraphDataset(InMemoryDataset):
                     current_state = states(str(_DATA_DIR / f"data/States_{subpanel}.mat"))
             else:
                 current_state = states(str(_DATA_DIR / f"data/States_{self.panel_number}.mat"))
-            
+
             adj_matrix = adjencency_matrix(current_state, state_idx=state, freq_idx=self.freq)  # shape: paths x paths
 
             if (adj_matrix == 0).all():
@@ -97,7 +97,8 @@ class Panel_GraphDataset(InMemoryDataset):
             # y = labels  # shape: pathsxoutput_dim
 
             data_list.append(Data(x=x, edge_index=edge_index, edge_weight=edge_weight,
-                                  y=torch.tensor([state], dtype=torch.long)))
+                                  y=torch.tensor([state], dtype=torch.long),
+                                  panel=torch.tensor([self.panel_number], dtype=torch.long)))
         data, slices = self.collate(data_list)
         torch.save((data, slices), self.processed_paths[0])
 
@@ -149,7 +150,7 @@ class features_GraphDataset(InMemoryDataset):
                     for sp in NR_SAVED_STATES.keys():
                         start_idx = STATE_START_INDICES[sp]
                         end_idx = start_idx + NR_SAVED_STATES[sp]
-                        if start_idx <= state <= end_idx:
+                        if start_idx <= state < end_idx:
                             subpanel = sp
                             print(f"State {state} belongs to subpanel {subpanel}")
                             break
@@ -163,13 +164,15 @@ class features_GraphDataset(InMemoryDataset):
             adj_matrix = adj_matrix[connection_matrix==1]  # shape: num_edges
             edge_weight = torch.tensor((np.array(adj_matrix)), dtype=torch.float)
             data_list.append(Data(x=x, edge_index=edge_index, edge_weight=edge_weight,
-                                  y=torch.tensor([state], dtype=torch.long)))
+                                  y=torch.tensor([state], dtype=torch.long),
+                                  panel=torch.tensor([self.panel_number], dtype=torch.long)))
         data, slices = self.collate(data_list)
 
         # make sure the processed directory exists
         processed_dir = Path(self.processed_paths[0]).parent
         processed_dir.mkdir(parents=True, exist_ok=True)
-        torch.save((data, slices), self.processed_paths[0])        
+        torch.save((data, slices), self.processed_paths[0])     
+        print(f"Processed data saved to {self.processed_paths[0]} with {len(data_list)} states.")  
 
 
 if __name__ == "__main__":

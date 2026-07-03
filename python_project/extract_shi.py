@@ -10,7 +10,7 @@ import numpy as np
 import tensorflow as tf
 from states_check import prepare_simple_dataset
 
-def extract_shi(folders, freq, dataset, GAN_dir=r"C:\Users\Maria\Documents\Honours Programme\Networks\GAN"):
+def extract_shi(folders, freq, dataset, GAN_dir=r"C:\Users\Maria\Documents\Honours Programme\Networks\GAN", features=False, path_idx=None):
     '''
     Extract sHI values from the trained autoencoder models for a given dataset and frequency.
     inputs:
@@ -29,39 +29,51 @@ def extract_shi(folders, freq, dataset, GAN_dir=r"C:\Users\Maria\Documents\Honou
     path_labels = []
     big_latent_all = []
 
+    VALIDATION_PANEL_MAP = {'123': '109'}
+    model_panel = VALIDATION_PANEL_MAP.get(dataset, dataset)
+
     for folder in folders:
     
         for file in os.listdir(folder):
             if not file.endswith(".h5"):
                 continue
         
+        
+                
             parts = file.split("_")
-            # find first "-" part and take the number after "path"
             seg = parts[3]
             i = seg.find("-")
-            path = int(parts[3][4:i])
+            if i != -1:
+                path = int(seg[4:i])
+            else:
+                path = int(seg.split(".")[0])
+
+            
+            panel = parts[2]
+            if panel != model_panel and features:
+                continue
+            if path_idx is not None and path != path_idx:
+                continue
+        
             custom_objs = {"KSparse": KSparse}
             model = tf.keras.models.load_model(os.path.join(folder, file), custom_objects=custom_objs, compile=False, safe_mode=False)
-            ds = prepare_simple_dataset(path, freq, dataset, include_benchmark=True)
+            if features: 
+                ds = prepare_simple_dataset(path, freq, dataset, include_benchmark=True, features=True)
+            else:
+                ds = prepare_simple_dataset(path, freq, dataset, include_benchmark=True)
 
-            batches = []
-            big_latent = []
-            big_latent_extractor = tf.keras.Model(inputs=model.input, outputs=model.get_layer("k_sparse_1").output)
-                
-            for x, y in ds:
-                _, latent_batch = model.predict(x, verbose=0)
-                # if latent_batch is 3D (batch, time, dim) flatten time into samples:
-                if latent_batch.ndim == 3:
-                    latent_batch = latent_batch.reshape(-1, latent_batch.shape[-1])
-                batches.append(latent_batch)
+            if features:
+                big_latent_extractor = tf.keras.Model(inputs=model.input, outputs=model.get_layer("latent_space").output)
+            else:
+                big_latent_extractor = tf.keras.Model(inputs=model.input, outputs=model.get_layer("k_sparse_1").output)
 
-                latent_batch = big_latent_extractor.predict(x, verbose=0)
-                big_latent.append(latent_batch)
+            _, path_latent = model.predict(ds, verbose=0)
+            if path_latent.ndim == 3:
+                path_latent = path_latent.reshape(-1, path_latent.shape[-1])
 
-            path_latent = np.concatenate(batches, axis=0)   # (n_states, latent_dim)
             latents_all.append(path_latent)
             path_labels.append(path)
-            big_latent_all.append(np.concatenate(big_latent, axis=0))
+            big_latent_all.append(big_latent_extractor.predict(ds, verbose=0))
 
     return latents_all, path_labels, big_latent_all
 

@@ -276,62 +276,65 @@ def plot_sHI_vs_RUL(
 
 if __name__ == "__main__":
 
+    # ── Dataset configuration ──────────────────────────────────────────────────
     base_batch_size = 30
     test_batch_size = 1
-    path_i = 0
+    path_i      = 0
     frequency_i = 3
     train_ds_names = ["103", "104", "105"]
-    val_ds_names = [ "109"] 
-    test_ds_names = ["123_1","123_2","123_31","123_31", "123_32","123_41",  "123_42", "123_43","123_44"]
+    val_ds_names   = ["109"]
+    test_ds_names  = ["123_1", "123_2", "123_31", "123_32", "123_41", "123_42", "123_43", "123_44"]
+    state_idx = 0      # which state to show in the reconstruction plot
+    save_dir  = r"C:\Users\Maria\Documents\Honours Programme\Networks\GAN\results\verification_plot_shi"
+    splits_to_plot = ["train","validation", "test"]   # any subset of "train", "validation", "test"
 
-    train_dataset, val_dataset, test_dataset, ds_dict, target_dict, RUL_dict, States_dict = prepare_datastores(path_i, frequency_i, base_batch_size, test_batch_size, train_ds_names, val_ds_names, test_ds_names) 
-    traun_dataset_bench, val_dataset_bench, test_dataset_bench, ds_dict_bench, target_dict_bench, RUL_dict_bench, States_dict_bench = prepare_datastores(path_i, frequency_i, base_batch_size, test_batch_size, train_ds_names, val_ds_names, test_ds_names, include_benchmark=True)    
+    # ── Models to evaluate ────────────────────────────────────────────────────
+    # Each entry: model .h5 path, whether it needs benchmark input, display name
+    models_to_run = [
+        
+        {
+            "path": r'C:\Users\Maria\Documents\Honours Programme\Networks\GAN\Model_for_every_path\Bayesian_CNN_AE_path0-02-05-23-55-deep_CNN_autoencoder13.4058.h5',
+            "include_benchmark": True,
+            "name": "CNN_AE",
+        },
+    ]
+    # ──────────────────────────────────────────────────────────────────────────
 
-
-    ctx = PlotContext(
-        ds_dict=ds_dict,
-        target_dict=target_dict,
-        RUL_dict=RUL_dict,
-        States_dict=States_dict,
-        train_ds_names=train_ds_names,
-        validation_ds_names=val_ds_names,
-        test_ds_names=test_ds_names,
-    )
-
-    ctx_bench = PlotContext(
-        ds_dict=ds_dict_bench,
-        target_dict=target_dict_bench,
-        RUL_dict=RUL_dict_bench,
-        States_dict=States_dict_bench,
-        train_ds_names=train_ds_names,
-        validation_ds_names=val_ds_names,
-        test_ds_names=test_ds_names,
-    )
-
-    # Load network with custom layer registration
     custom_objs = {"KSparse": KSparse}
-    model = tf.keras.models.load_model(
-        "C:\\Users\\Maria\\Documents\\Honours Programme\\Networks\\GAN\\python_project\\results_hype_tweaked\\deep_fully_connected_autoencoder_only_proxy99.1203.h5",
-        custom_objects=custom_objs,
-        compile=False,
-        safe_mode=False,  # allow Lambda deserialization from trusted file
-    )
 
-    model_bench = tf.keras.models.load_model(
-        "C:\\Users\\Maria\\Documents\\Honours Programme\\Networks\\GAN\\python_project\\results_hype_tweaked\\deep_CNN_autoencoder_only_proxy99.4161.h5",
-        custom_objects=custom_objs,
-        compile=False,
-        safe_mode=False,  # allow Lambda deserialization from trusted file
-    )
+    for cfg in models_to_run:
+        print(f"\n── {cfg['name']} ──")
+        model = tf.keras.models.load_model(
+            cfg["path"],
+            custom_objects=custom_objs,
+            compile=False,
+            safe_mode=False,
+        )
 
+        _, _, _, ds_dict, target_dict, RUL_dict, States_dict = prepare_datastores(
+            path_i, frequency_i, base_batch_size, test_batch_size,
+            train_ds_names, val_ds_names, test_ds_names,
+            include_benchmark=cfg["include_benchmark"],
+        )
 
-    
-    state_idx = 20 # which state to visualize (0-based index), assuming that the test data has batch size 1
-    plot_sHI_vs_RUL(model, ctx, state_idx, "train", save=False, dir="C:\\Users\\Maria\\Documents\\Honours Programme\\Networks\\GAN\\results\\verification_plot_shi",  show=True)
-    plot_sHI_vs_RUL(model, ctx, state_idx, "test", save=False, dir="C:\\Users\\Maria\\Documents\\Honours Programme\\Networks\\GAN\\results\\verification_plot_shi", show=True)
+        ctx = PlotContext(
+            ds_dict=ds_dict,
+            target_dict=target_dict,
+            RUL_dict=RUL_dict,
+            States_dict=States_dict,
+            train_ds_names=train_ds_names,
+            validation_ds_names=val_ds_names,
+            test_ds_names=test_ds_names,
+        )
 
-    plot_sHI_vs_RUL(model_bench, ctx_bench, state_idx, "train", save=False, dir="C:\\Users\\Maria\\Documents\\Honours Programme\\Networks\\GAN\\results\\verification_plot_shi",  show=True)
-    plot_sHI_vs_RUL(model_bench, ctx_bench, state_idx, "test", save=False, dir="C:\\Users\\Maria\\Documents\\Honours Programme\\Networks\\GAN\\results\\verification_plot_shi", show=True)
+        for split in splits_to_plot:
+            plot_sHI_vs_RUL(
+                model, ctx, state_idx, split,
+                save=False,
+                dir=save_dir,
+                plot_name=cfg["name"],
+                show=True,
+            )
 
 
 # benchmark 

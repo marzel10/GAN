@@ -66,3 +66,8 @@ Single path features AE:
 - increasing learning rate helped with the reconstruction quality 
 - the monotonocity loss value remains the same whether or  not the monotonocity weight is higher than 0
 - Making the const in the loss function 1 (instead of 10) lowers the difference between training and validation but does not change the fact that the network is not learning 
+
+20.06:
+- baseline subtracted from the monotonicity loss
+- noise parameter deleted (not helful)
+- reconstuction and latent pretty good in the features fc_AE

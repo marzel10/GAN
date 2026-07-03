@@ -20,6 +20,9 @@ slprj/
 *.mat
 *.npy
 
+# Databese files
+*.csv
+
 # Output directories
 Model_for_every_path/
 GCN_models/

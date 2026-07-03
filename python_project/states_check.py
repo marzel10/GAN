@@ -139,8 +139,8 @@ def prepare_simple_dataset(path_i, freq_i, panel_name,batch_size=1,include_bench
                     full_feat = feat
                 else:
                     full_feat = np.concatenate([full_feat, feat], axis=0)
-                ds, _ = make_ds_features(full_feat, full_feat.shape[0], batch_size=batch_size)
-                return ds
+            ds, _ = make_ds_features(full_feat, full_feat.shape[0], batch_size=batch_size)
+            return ds
         else:
             st_idx = np.where(np.array(ds_names) == "123_1")[0]
             for st in states_list[st_idx[0]:st_idx[0]+8]:

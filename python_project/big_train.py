@@ -281,6 +281,7 @@ def model_train_features(
         test_ds_names=["123_1", "123_31", "123_41", "123_43","123_2", "123_32", "123_42", "123_44"],
         results_dir=f"model_train_results/features",
         seed=None,
+        filepath=None
     ):
     '''
     Trains a features-based autoencoder (FC or CNN) on precomputed time-frequency features.
@@ -379,7 +380,13 @@ def model_train_features(
     # Save the trained model
     data_time = pd.Timestamp.now().strftime("%d-%m-%H-%M")
     bench_tag = "_benchmark" if include_benchmark else ""
-    path = f"{results_dir}-{data_time}-{net_type}_features{bench_tag}_{final_loss:.4f}.h5"
+    if filepath is not None:
+        # Connect filepath to results_dir if it's not an absolute path
+        if not os.path.isabs(filepath):
+            filepath = os.path.join(results_dir, filepath)
+        path = filepath
+    else:
+        path = f"{results_dir}-{data_time}-{net_type}_features{bench_tag}_{final_loss:.4f}.h5"
    
     model.save(path)
     print(f"Model saved as {path}")
@@ -461,17 +468,17 @@ def model_train_features(
 if __name__ == "__main__":
     seed = 42
     np.random.seed(seed)
-    net_type = 'fc_AE' # Options: 'fc_AE', 'CNN_AE'
+    net_type = 'CNN_AE' #'fc_AE' # Options: 'fc_AE', 'CNN_AE'
     basic_panels =["109", "105", "104", "103"] # panel that is used for validation 
     final_loss_list = []
     rec_train_loss_list = []
     lat_train_loss_list = []
     rec_val_loss_list = []
     lat_val_loss_list = []
-    features = True
+    features = False
     benchmark = True
     p_idx =0
-    path_indexes = np.arange(0, 28)  # Example path indexes to iterate over; adjust as needed
+    path_indexes = [0]  # Example path indexes to iterate over; adjust as needed
     losses_of_paths = {panel: np.zeros(len(path_indexes)) for panel in basic_panels}
     rec_losses_of_paths = {panel: np.zeros(len(path_indexes)) for panel in basic_panels}
     lat_losses_of_paths = {panel: np.zeros(len(path_indexes)) for panel in basic_panels}
@@ -483,7 +490,7 @@ if __name__ == "__main__":
     average_final_loss = np.zeros(len(path_indexes))
     val_average_final_loss = np.zeros(len(path_indexes))
 
-    for p_idx in path_indexes:
+    for path_i, p_idx in enumerate(path_indexes):
         if len(path_indexes) == 1:
 
             for panel in basic_panels:
@@ -501,13 +508,14 @@ if __name__ == "__main__":
                         include_benchmark=benchmark,
                         epochs=200, learning_rate=0.001,
                         params=params, path_i=p_idx, train_ds_names=train_ds_names, val_ds_names=val_ds_names,
-                        seed=seed, results_dir=f"model_train_results/features/",
+                        seed=seed, results_dir=f"models_features", filepath=f"Model_val_{panel}_{p_idx}.h5"
                     )
                     recon_name = 'reconstruction'
                     latent_name = 'sHI'
+
                 else:
                     model, history, final_loss, model_info, ds_dict, target_dict, RUL_dict, States_dict, train_ds_names, val_ds_names, test_ds_names, results_dir = model_train(net_type, path_i=0, epochs=100, n_blocks=2, train_ds_names=train_ds_names, val_ds_names=val_ds_names, seed=seed, results_dir=f"model_train_results/{pd.Timestamp.now().strftime('%Y-%m-%d_%H')}/{net_type}_panel_{panel}/")
-                    
+
                     recon_name = 'final_1' if net_type == 'CNN_AE' else 'fc_output_1'
                     latent_name = 'fc_latent_1'
 
@@ -617,7 +625,7 @@ if __name__ == "__main__":
                         include_benchmark=benchmark,
                         epochs=200, learning_rate=0.001,
                         params=params, path_i=p_idx, train_ds_names=train_ds_names, val_ds_names=val_ds_names,
-                        seed=seed, results_dir=f"model_train_results/features/",
+                        seed=seed, results_dir=f"models_features", filepath=f"Model_val_{panel}_{p_idx}.h5"
                     )
                     recon_name = 'reconstruction'
                     latent_name = 'sHI'
@@ -627,25 +635,25 @@ if __name__ == "__main__":
                     recon_name = 'final_1' if net_type == 'CNN_AE' else 'fc_output_1'
                     latent_name = 'fc_latent_1'
                     
-                # training 
-                final_loss_list[i] = final_loss
-                losses_of_paths[panel][p_idx] = final_loss 
-                rec_losses_of_paths[panel][p_idx] = rec_loss_at_final
-                lat_losses_of_paths[panel][p_idx] = lat_loss_at_final 
+                # training
+                final_loss_list[i] = final_loss          # i = panel index, correct
+                losses_of_paths[panel][path_i] = final_loss
+                rec_losses_of_paths[panel][path_i] = rec_loss_at_final
+                lat_losses_of_paths[panel][path_i] = lat_loss_at_final
 
                 # validation
-                val_final_loss_list[i] = val_final_loss
-                val_losses_of_paths[panel][p_idx] = val_final_loss
-                val_rec_losses_of_paths[panel][p_idx] = val_rec_loss_at_final
-                val_lat_losses_of_paths[panel][p_idx] = val_lat_loss_at_final
+                val_final_loss_list[i] = val_final_loss  # i = panel index, correct
+                val_losses_of_paths[panel][path_i] = val_final_loss
+                val_rec_losses_of_paths[panel][path_i] = val_rec_loss_at_final
+                val_lat_losses_of_paths[panel][path_i] = val_lat_loss_at_final
 
 
             print("Final losses for each panel:", final_loss_list)
 
-            average_final_loss[p_idx] = np.mean(final_loss_list)
-            val_average_final_loss[p_idx] = np.mean(val_final_loss_list)
+            average_final_loss[path_i] = np.mean(final_loss_list)
+            val_average_final_loss[path_i] = np.mean(val_final_loss_list)
             
-            print(f"Average final loss across panels: {average_final_loss[p_idx]:.4f}")
+            print(f"Average final loss across panels: {average_final_loss[i]:.4f}")
         
     # save the losses of all paths in a csv file for later analysis
     losses_df = pd.DataFrame({

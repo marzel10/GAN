@@ -13,6 +13,8 @@ important functions:
 - animate_panel(panel_number, model, n_pixels, beta, c): creates an animation of the WCPDI map over the states for a given panel using the trained GCN model
 '''
 
+import os
+
 from matplotlib import animation
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from torch import device
@@ -22,7 +24,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from plot_panel import SENSOR_POSITIONS, SENSOR_PAIRS, PANEL_H, PANEL_W, _draw_static_panel
-from graph_dataset import Panel_GraphDataset
+from graph_dataset import Panel_GraphDataset, features_GraphDataset
+from extract_shi import extract_shi
+
+from weight_matrix import FAILURES_RECORD
 
 T = 0.001 * 10e-3
 v = 62500
@@ -30,8 +35,36 @@ MAX_DIST = v * T
 
 def P(P_arr, grid, state, dataset, model, beta=None):
     X, Y = grid                          # both shape (100, 100)
+    # Check if this panel has some failures
+    if dataset.panel_number in FAILURES_RECORD:
+        failed_state, failed_sensor = FAILURES_RECORD[dataset.panel_number]
+        
     for path_idx, (a, b) in enumerate(SENSOR_PAIRS):
-        sHI = extract_sHI_after_GAN(model, dataset, state, path_idx)
+        
+        # check if panel has some failures recorded for this path
+        if state >= failed_state and (a == failed_sensor or b == failed_sensor):
+            sHI = 0.0
+        else:
+            sHI = extract_sHI_after_GAN(model, dataset, state, path_idx)
+        p1 = SENSOR_POSITIONS[a - 1]    # shape (2,)
+        p2 = SENSOR_POSITIONS[b - 1]    # shape (2,)
+
+        d1 = np.sqrt((X - p1[0])**2 + (Y - p1[1])**2)   # shape (100, 100)
+        d2 = np.sqrt((X - p2[0])**2 + (Y - p2[1])**2)   # shape (100, 100)
+        d  = np.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)  # scalar
+
+        R = (d1 + d2) / d - 1                            # shape (100, 100)
+
+        path_beta = beta if beta is not None else optimal_beta(d, MAX_DIST)
+
+        W = np.where(R < path_beta, 1 - R / path_beta, 0.0)   # shape (100, 100)
+
+        P_arr += sHI * W                                 # accumulate in-place
+
+def P_AE(P_arr, grid, sHI_per_state, folders, freq, dataset, features=False, beta=None):
+    X, Y = grid                          # both shape (100, 100)
+    for path_idx, (a, b) in enumerate(SENSOR_PAIRS):
+        sHI = sHI_per_state[path_idx]     # sHI[0]: array (n_states, 1) for this path
         p1 = SENSOR_POSITIONS[a - 1]    # shape (2,)
         p2 = SENSOR_POSITIONS[b - 1]    # shape (2,)
 
@@ -51,8 +84,8 @@ def P(P_arr, grid, state, dataset, model, beta=None):
 
 def U(U_arr, grid, beta=None):
     X, Y = grid
-    
-    for path_idx, (a, b) in enumerate(SENSOR_PAIRS):
+
+    for _, (a, b) in enumerate(SENSOR_PAIRS):
         p1 = SENSOR_POSITIONS[a - 1]
         p2 = SENSOR_POSITIONS[b - 1]
 
@@ -61,11 +94,10 @@ def U(U_arr, grid, beta=None):
         d  = np.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
 
         R = (d1 + d2) / d - 1
-        if beta is None:
-            beta = optimal_beta(d, MAX_DIST)
-            print(f"Path {path_idx}: d={d:.2f}, beta={beta:.2f}")
-        
-        W = np.where(R < beta, 1 - R / beta, 0.0)
+
+        path_beta = beta if beta is not None else optimal_beta(d, MAX_DIST)
+
+        W = np.where(R < path_beta, 1 - R / path_beta, 0.0)
 
         U_arr += W
 
@@ -75,60 +107,54 @@ def R_THR(U, thr, grid):
     X, Y = grid
     dx = X[1, 0] - X[0, 0]
     dy = Y[0, 1] - Y[0, 0]
-    Area = 0
-    total_area = X.shape[0] * X.shape[1] * dx * dy 
-    peak_U = max(U.flatten())
-    for i in range(U.shape[0]):
-        for j in range(U.shape[1]):
-            if U[i, j] >= thr * peak_U:
-                Area += dx * dy
-    
-    return Area / total_area
+    total_area = X.shape[0] * X.shape[1] * dx * dy
+    peak_U = U.max()
+    active_pixels = np.sum(U >= thr * peak_U)
+    return active_pixels * dx * dy / total_area
 
-def WCPDI(P, U, c, grid):
-    X, Y = grid
-    THR = find_threshold(U, c, (X, Y))
-    WCPDI_map = np.zeros_like(P)
-    peak_U = max(U.flatten())
-    for i in range(P.shape[0]):
-        for j in range(P.shape[1]):
-            if P[i, j] > THR * peak_U:
-                WCPDI_map[i, j] = (P[i, j] - THR * peak_U) / (U[i, j]/peak_U)
-            else:
-                WCPDI_map[i, j] = 0.0
-
-    return WCPDI_map
-
-def find_threshold(U, c, grid): 
-    # find where R_THR = c
-    peak_U = max(U.flatten())
-    for thr in np.linspace(0, 1, 100):
-        if R_THR(U, thr, grid) >= c:
+def find_threshold(U, c, grid):
+    X = grid[0]
+    total_pixels = X.shape[0] * X.shape[1]
+    peak_U = U.max()
+    # for each candidate threshold, count active pixels in one vectorised pass
+    thresholds = np.linspace(0, 1, 100)
+    for thr in thresholds:
+        active = np.sum(U >= thr * peak_U)
+        if active / total_pixels >= c:
             return thr
     return 0.0
 
+def WCPDI(P, U, c, grid):
+    THR = find_threshold(U, c, grid)
+    peak_U = U.max()
+    thr_val = THR * peak_U
+    mask = P > thr_val
+    #WCPDI_map = np.where(mask, (P - thr_val) / (U / peak_U), 0.0)
+    WCPDI_map = (P - thr_val) / (U / peak_U)
+    return WCPDI_map
+
 def extract_sHI_after_GAN(model, dataset, state, path_index, extract_HI=False):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    loader = torch_geometric.loader.DataLoader(dataset, batch_size=1, shuffle=False)
     model.eval()
-    HIs = []
-    states_idx = []
     with torch.no_grad():
-        for data in loader:
-            if data.y.item() != state and not extract_HI:
-                continue    
-            data = data.to(device)
-            out, HI = model(data.x, data.edge_index, data.batch, data.edge_weight)
-            
-            if not extract_HI:
+        if extract_HI:
+            loader = torch_geometric.loader.DataLoader(dataset, batch_size=len(dataset), shuffle=False)
+            data = next(iter(loader)).to(device)
+            _, HI = model(data.x, data.edge_index, data.batch, data.edge_weight)
+            return HI.cpu().numpy(), data.y.cpu().numpy()
+        else:
+            loader = torch_geometric.loader.DataLoader(dataset, batch_size=1, shuffle=False)
+            for data in loader:
+                if data.y.item() != state:
+                    continue
+                data = data.to(device)
+                out, HI = model(data.x, data.edge_index, data.batch, data.edge_weight)
                 if (out == 0).all():
                     print(f"Warning: Model output is all zeros for state {state}. Check if the model is producing correct outputs.")
-                if data.y.item() == state:
-                    return out[path_index].item()
-            else:
-                HIs.append(HI.item())
-                states_idx.append(data.y.item())
-        return HIs, states_idx
+                return out[path_index].item()
+    
+
+
     
 def plot_HI(model, dataset, title="HI vs State Index", save_path=None):
     HI, states_idx = extract_sHI_after_GAN(model, dataset, state=0, path_index=1, extract_HI=True)
@@ -144,11 +170,17 @@ def plot_HI(model, dataset, title="HI vs State Index", save_path=None):
 
 
 
-def animate_panel(panel_number, model,n_pixels, c, beta=None, state_to_show=None):
-
+def animate_panel(panel_number, model, n_pixels, c, beta=None, state_to_show=None, features=False, transform=None, show_snap=False, output_dir="animations", file_name=None):
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # find dataset
-    dataset = Panel_GraphDataset(root='graph_data', panel_number=panel_number, freq=3, big_latent=True)
+    if features:
+        dataset = features_GraphDataset(root='graph_data', panel_number=panel_number, freq=3)
+    else:
+        dataset = Panel_GraphDataset(root='graph_data', panel_number=panel_number, freq=3, big_latent=True)
+    if transform is not None:
+        dataset.transform = transform
     n_states = len(dataset)
     model = model.to(device)
 
@@ -161,36 +193,168 @@ def animate_panel(panel_number, model,n_pixels, c, beta=None, state_to_show=None
     U_arr = np.zeros_like(X)
     U(U_arr, (X, Y), beta)
 
-    fig, ax = plt.subplots(figsize=(6, 8))
-    _draw_static_panel(ax, panel_number)
-
-    frames = []
+    wcpdi_maps = []
     for state in range(n_states):
         P_arr = np.zeros_like(X)
         P(P_arr, (X, Y), state, dataset, model, beta)
-        WCPDI_map = WCPDI(P_arr, U_arr, c, (X, Y))
-        im = ax.imshow(WCPDI_map.T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap='hot', vmin=0)
-        title = ax.text(0.5, 1.01, f"State {state}/{n_states - 1}",
+        wcpdi_maps.append(WCPDI(P_arr, U_arr, c, (X, Y)))
+
+    vmin = min(m.min() for m in wcpdi_maps)
+    vmax = max(m.max() for m in wcpdi_maps)
+    if vmax == vmin:
+        vmax = vmin + 1.0
+
+    span = vmax - vmin
+
+    def _norm(m):
+        return (m - vmin) / span
+
+    fig, (ax, ax_norm) = plt.subplots(1, 2, figsize=(12, 8))
+    _draw_static_panel(ax, panel_number)
+    _draw_static_panel(ax_norm, panel_number)
+
+    #Plot WCPDI map
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.05)
+    im0 = ax.imshow(wcpdi_maps[0].T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap='hot')
+    fig.colorbar(im0, cax=cax, label='WCPDI Value')
+    ax.set_title('WCPDI')
+
+    # Plot normalized WCPDI map
+    divider_norm = make_axes_locatable(ax_norm)
+    cax_norm = divider_norm.append_axes("right", size="5%", pad=0.05)
+    im0_norm = ax_norm.imshow(_norm(wcpdi_maps[0]).T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap='hot', vmin=0, vmax=1)
+    fig.colorbar(im0_norm, cax=cax_norm, label='Normalised WCPDI')
+    ax_norm.set_title('Normalised WCPDI')
+
+    frames = []
+    for state, WCPDI_map in enumerate(wcpdi_maps):
+        im = ax.imshow(WCPDI_map.T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap='hot', vmin=vmin, vmax=vmax)
+        im_n = ax_norm.imshow(_norm(WCPDI_map).T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap='hot', vmin=0, vmax=1)
+        title = ax.text(0.5, 1.05, f"State {state}/{n_states - 1}",
                         transform=ax.transAxes, ha='center', va='bottom')
-        frames.append([im, title])
+        frames.append([im, im_n, title])
         if state == state_to_show:
-            fig_snap, ax_snap = plt.subplots(figsize=(6, 8))
-            _draw_static_panel(ax_snap, panel_number)
-            im_snap = ax_snap.imshow(WCPDI_map.T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap='hot')
-            divider = make_axes_locatable(ax_snap)
-            cax = divider.append_axes("right", size="5%", pad=0.05)
-            fig_snap.colorbar(im_snap, cax=cax, label='WCPDI Value')
-            ax_snap.set_title(f'WCPDI Map for State {state}')
-            ax_snap.set_xlabel('X Position')
-            ax_snap.set_ylabel('Y Position')
+            fig_snap, (ax_s, ax_sn) = plt.subplots(1, 2, figsize=(12, 8))
+            _draw_static_panel(ax_s, panel_number)
+            _draw_static_panel(ax_sn, panel_number)
+            im_s = ax_s.imshow(WCPDI_map.T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap='hot', vmin=vmin, vmax=vmax)
+            fig_snap.colorbar(im_s, cax=make_axes_locatable(ax_s).append_axes("right", size="5%", pad=0.05), label='WCPDI Value')
+            ax_s.set_title(f'WCPDI — State {state}')
+            im_sn = ax_sn.imshow(_norm(WCPDI_map).T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap='hot', vmin=0, vmax=1)
+            fig_snap.colorbar(im_sn, cax=make_axes_locatable(ax_sn).append_axes("right", size="5%", pad=0.05), label='Normalised WCPDI')
+            ax_sn.set_title(f'Normalised WCPDI — State {state}')
+            for a in (ax_s, ax_sn):
+                a.set_xlabel('X Position')
+                a.set_ylabel('Y Position')
             fig_snap.tight_layout()
-            fig_snap.savefig(f"WCPDI_map_state_{state}.svg", format='svg', bbox_inches='tight')
-            plt.show()
-            
+
+            if file_name is None:
+                file_name = f"WCPDI_map_state_{state}"
+            fig_snap.savefig(f"{output_dir}/{file_name}_snap.svg", format='svg', bbox_inches='tight')
+            if show_snap:   
+                plt.show()
 
     anim = animation.ArtistAnimation(fig, frames, interval=200, blit=True)
 
-    anim.save(f'panel_{panel_number}_WCPDI_animation.gif', writer='pillow')
+    if file_name is None:
+        file_name = f"WCPDI_panel_{panel_number}"
+    anim.save(f'{output_dir}/{file_name}_animation.gif', writer='pillow')
+
+
+def animate_panel_sidebyside(panel_number, model, n_pixels, c, beta=None, features=False, transform=None, output_dir="animations", file_name=None, faults_data=None):
+    """Two-panel animation.
+
+    Left:  globally normalised WCPDI (0-1 scale fixed across all states).
+    Right: per-frame adaptive scale — the full colour range always spans the
+           current frame's [min, max], so the colorbar values change each frame.
+    """
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    if features:
+        dataset = features_GraphDataset(root='graph_data', panel_number=panel_number, freq=3)
+    else:
+        dataset = Panel_GraphDataset(root='graph_data', panel_number=panel_number, freq=3, big_latent=True)
+    if transform is not None:
+        dataset.transform = transform
+    n_states = len(dataset)
+    model = model.to(device)
+
+    dA = (PANEL_W * PANEL_H) / n_pixels
+    dx = np.sqrt(dA)
+    x = np.arange(0, PANEL_W + dx, dx)
+    y = np.arange(0, PANEL_H + dx, dx)
+    X, Y = np.meshgrid(x, y, indexing='ij')
+
+    U_arr = np.zeros_like(X)
+    U(U_arr, (X, Y), beta)
+
+    wcpdi_maps = []
+    for state in range(n_states):
+        P_arr = np.zeros_like(X)
+        P(P_arr, (X, Y), state, dataset, model, beta)
+        wcpdi_maps.append(WCPDI(P_arr, U_arr, c, (X, Y)))
+
+    vmin_global = min(m.min() for m in wcpdi_maps)
+    vmax_global = max(m.max() for m in wcpdi_maps)
+    span_global = (vmax_global - vmin_global) or 1.0
+
+    def _norm(m):
+        return (m - vmin_global) / span_global
+
+    fig, (ax_norm, ax_adapt) = plt.subplots(1, 2, figsize=(12, 8))
+    _draw_static_panel(ax_norm, panel_number)
+    _draw_static_panel(ax_adapt, panel_number)
+
+    divider_norm = make_axes_locatable(ax_norm)
+    cax_norm = divider_norm.append_axes("right", size="5%", pad=0.05)
+    im_norm = ax_norm.imshow(_norm(wcpdi_maps[0]).T, extent=(0, PANEL_W, 0, PANEL_H),
+                             origin='lower', cmap='hot', vmin=0, vmax=1)
+    cbar_norm = fig.colorbar(im_norm, cax=cax_norm, label='Normalised WCPDI')
+    ax_norm.set_title('Normalised WCPDI')
+    ax_norm.set_xlabel('X Position')
+    ax_norm.set_ylabel('Y Position')
+
+    m0 = wcpdi_maps[0]
+    fmin0, fmax0 = m0.min(), m0.max()
+    if fmax0 == fmin0:
+        fmax0 = fmin0 + 1.0
+    divider_adapt = make_axes_locatable(ax_adapt)
+    cax_adapt = divider_adapt.append_axes("right", size="5%", pad=0.05)
+    im_adapt = ax_adapt.imshow(m0.T, extent=(0, PANEL_W, 0, PANEL_H),
+                               origin='lower', cmap='hot', vmin=fmin0, vmax=fmax0)
+    cbar_adapt = fig.colorbar(im_adapt, cax=cax_adapt, label='WCPDI Value')
+    ax_adapt.set_title('Adaptive-scale WCPDI')
+    ax_adapt.set_xlabel('X Position')
+    ax_adapt.set_ylabel('Y Position')
+
+    title = ax_norm.text(0.5, 1.05, f"State 0/{n_states - 1}",
+                         transform=ax_norm.transAxes, ha='center', va='bottom')
+
+    fig.tight_layout()
+
+    def update(state):
+        m = wcpdi_maps[state]
+        im_norm.set_data(_norm(m).T)
+
+        fmin, fmax = m.min(), m.max()
+        if fmax == fmin:
+            fmax = fmin + 1.0
+        im_adapt.set_data(m.T)
+        im_adapt.set_clim(fmin, fmax)
+        cbar_adapt.update_normal(im_adapt)
+
+        title.set_text(f"State {state}/{n_states - 1}")
+        return [im_norm, im_adapt, title]
+
+    anim = animation.FuncAnimation(fig, update, frames=n_states, interval=200, blit=False)
+
+    if file_name is None:
+        file_name = f"WCPDI_panel_{panel_number}_sidebyside"
+    anim.save(f'{output_dir}/{file_name}_animation.gif', writer='pillow')
+    plt.close(fig)
 
 
 def optimal_beta(d, max_d):
@@ -200,11 +364,36 @@ def optimal_beta(d, max_d):
         return   max_d/d-1
             
 if __name__ == "__main__":
-    dir = r"GCN_models\gcn_big_latent.pt"
-    model = torch.load(dir, weights_only=False)
-    dataset_109 = Panel_GraphDataset(root='graph_data', panel_number=109, freq=3, big_latent=True)
-    dataset_104 = Panel_GraphDataset(root='graph_data', panel_number=104, freq=3, big_latent=True)
-    dataset_123 = Panel_GraphDataset(root='graph_data', panel_number=123, freq=3, big_latent=True)
+    features=True
+    f = 3
+    if features:
+        dir = r"GCN_models\gcn_features_lin.pt"
+
+        dataset_103 = features_GraphDataset(root='graph_data', panel_number=103, freq=f)
+        dataset_104 = features_GraphDataset(root='graph_data', panel_number=104, freq=f)
+        dataset_105 = features_GraphDataset(root='graph_data', panel_number=105, freq=f)
+        dataset_109 = features_GraphDataset(root='graph_data', panel_number=109, freq=f)
+        dataset_123 = features_GraphDataset(root='graph_data', panel_number=123, freq=f)
+        bundle = torch.load(dir, weights_only=False)
+        if isinstance(bundle, dict):
+            model = bundle['model']
+            feature_mean = bundle['feature_mean']
+            feature_std  = bundle['feature_std']
+            def norm_transform(data):
+                data.x = (data.x - feature_mean) / feature_std
+                return data
+            for ds in [dataset_103, dataset_104, dataset_105, dataset_109, dataset_123]:
+                ds.transform = norm_transform
+        else:
+            model = bundle
+            norm_transform = None
+    else:
+        dir = r"GCN_models\gcn_big_latent.pt"
+    
+        model = torch.load(dir, weights_only=False)
+        dataset_109 = Panel_GraphDataset(root='graph_data', panel_number=109, freq=f, big_latent=True)
+        dataset_104 = Panel_GraphDataset(root='graph_data', panel_number=104, freq=f, big_latent=True)
+        dataset_123 = Panel_GraphDataset(root='graph_data', panel_number=123, freq=f, big_latent=True)
 
     sHi = extract_sHI_after_GAN(model, dataset_109, state=0, path_index=0)
     print(f"Extracted sHI: {sHi}")
@@ -255,4 +444,4 @@ if __name__ == "__main__":
    
     plt.show()
 
-    animate_panel(panel_number=123, model=model, n_pixels=10000, c=0.9, beta=beta, state_to_show=60)
+    animate_panel(panel_number=103, model=model, n_pixels=10000, c=0.9, beta=beta, state_to_show=0, features=features, transform=norm_transform if features else None)

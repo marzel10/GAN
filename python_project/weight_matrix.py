@@ -13,8 +13,8 @@ from pathlib import Path
 from plot_panel import SENSOR_POSITIONS, SENSOR_PAIRS
 
 
-NR_SAVED_STATES ={"123_1": 7, "123_2": 7, "123_31": 16, "123_32": 13, "123_41": 10, "123_42": 10, "123_43": 10, "123_44": 10}
-STATE_START_INDICES = {"123_1": 0, "123_2": 7, "123_31": 14, "123_32": 30, "123_41": 43, "123_42": 53, "123_43": 63, "123_44": 73}
+NR_SAVED_STATES ={"123_1": 16, "123_2": 7, "123_31": 16, "123_32": 13, "123_41": 10, "123_42": 10, "123_43": 10, "123_44": 10}
+STATE_START_INDICES = {"123_1": 0, "123_2": 16, "123_31": 23, "123_32": 39, "123_41": 52, "123_42": 62, "123_43": 72, "123_44": 82}
 
 def attention_matrix(States: states, state_idx: (int or str), freq_idx: int) -> np.ndarray:
     num_paths = States.num_pair
@@ -26,8 +26,7 @@ def attention_matrix(States: states, state_idx: (int or str), freq_idx: int) -> 
         # find in state_start_idx based on the key
         start_idx =STATE_START_INDICES.get(States.panel_name, None)
         state_idx -= start_idx if start_idx is not None else 0
-        state_idx -=1
-        
+
 
     if isinstance(state_idx, str):
         if state_idx == ":":
@@ -89,29 +88,52 @@ def find_crossings():
 
 IS_CROSSING = find_crossings()
 
+FAILURES_RECORD ={
+    # panel_name: [relative_state_idex, sensor_idex]
+    "123_42": [9,3],
+    "104": [15, 8],
+    "105": [16, 8]
+}
+
 def adjencency_matrix(States, state_idx: (int or str), freq_idx: int) -> np.ndarray:
+
+    failure_info = FAILURES_RECORD.get(States.panel_name, None)
+    if failure_info is not None:
+        failure_state_idx, failure_sensor_idx = failure_info
     
     attention = attention_matrix(States, state_idx, freq_idx)
     if (attention == 0).all():
         print("Warning: Attention matrix is all zeros. Check if the attention values are correct.")
     if state_idx == ":":
-        adjencency = np.zeros((States.num_states, 28, 28), dtype=float)
+        adjacency = np.zeros((States.num_states, 28, 28), dtype=float)
         for s in range(States.num_states):
             for i in range(28):
                 for j in range(i + 1, 28):
                     if IS_CROSSING[i, j]:
-                        
+
+                        if failure_info is not None and s >= failure_state_idx and (i == failure_sensor_idx or j == failure_sensor_idx):
+                            # Skip the failed sensor for the affected states
+                            continue
                         adjacency[s, i, j] = attention[s, i, j]
                         adjacency[s, j, i] = attention[s, i, j]
-                        
-    else: 
+
+    else:
+        # match the state-index frame FAILURES_RECORD uses (relative to subpanel start for "123_*" panels)
+        local_state_idx = state_idx
+        if failure_info is not None and States.panel_name.startswith("123"):
+            start_idx = STATE_START_INDICES.get(States.panel_name, None)
+            local_state_idx = state_idx - start_idx if start_idx is not None else state_idx
+
         adjacency = np.zeros((28, 28), dtype=float)
         for i in range(28):
             for j in range(i + 1, 28):
                 if IS_CROSSING[i, j]:
+                    if failure_info is not None and local_state_idx >= failure_state_idx and (i == failure_sensor_idx or j == failure_sensor_idx):
+                        # Skip the failed sensor for the affected state
+                        continue
                     adjacency[i, j] = attention[i, j]
                     adjacency[j, i] = attention[i, j]
-                   
+
     return adjacency
 
 

@@ -23,11 +23,11 @@ import torch_geometric
 import numpy as np
 import matplotlib.pyplot as plt
 
-from plot_panel import SENSOR_POSITIONS, SENSOR_PAIRS, PANEL_H, PANEL_W, _draw_static_panel
+from plot_panel import SENSOR_POSITIONS, SENSOR_PAIRS, PANEL_H, PANEL_W, DAMAGE_POINTS, _draw_static_panel
 from graph_dataset import Panel_GraphDataset, features_GraphDataset
 from extract_shi import extract_shi
 
-from weight_matrix import FAILURES_RECORD
+from weight_matrix import failed_sensor_at
 
 T = 0.001 * 10e-3
 v = 62500
@@ -35,17 +35,13 @@ MAX_DIST = v * T
 
 def P(P_arr, grid, state, dataset, model, beta=None):
     X, Y = grid                          # both shape (100, 100)
-    # Check if this panel has some failures
-    if dataset.panel_number in FAILURES_RECORD:
-        failed_state, failed_sensor = FAILURES_RECORD[dataset.panel_number]
-        
+    failed_sensor = failed_sensor_at(dataset.panel_number, state)
+
     for path_idx, (a, b) in enumerate(SENSOR_PAIRS):
-        
-        # check if panel has some failures recorded for this path
-        if state >= failed_state and (a == failed_sensor or b == failed_sensor):
-            sHI = 0.0
-        else:
-            sHI = extract_sHI_after_GAN(model, dataset, state, path_idx)
+        # skip paths through a sensor that has failed by this state
+        if failed_sensor is not None and (a == failed_sensor or b == failed_sensor):
+            continue
+        sHI = extract_sHI_after_GAN(model, dataset, state, path_idx)
         p1 = SENSOR_POSITIONS[a - 1]    # shape (2,)
         p2 = SENSOR_POSITIONS[b - 1]    # shape (2,)
 
@@ -82,10 +78,14 @@ def P_AE(P_arr, grid, sHI_per_state, folders, freq, dataset, features=False, bet
 
         P_arr += sHI * W                                 # accumulate in-place
 
-def U(U_arr, grid, beta=None):
+def U(U_arr, grid, beta=None, panel_number=None, state=None):
     X, Y = grid
+    failed_sensor = failed_sensor_at(panel_number, state) if panel_number is not None and state is not None else None
 
     for _, (a, b) in enumerate(SENSOR_PAIRS):
+        # skip paths through a sensor that has failed by this state
+        if failed_sensor is not None and (a == failed_sensor or b == failed_sensor):
+            continue
         p1 = SENSOR_POSITIONS[a - 1]
         p2 = SENSOR_POSITIONS[b - 1]
 
@@ -190,11 +190,10 @@ def animate_panel(panel_number, model, n_pixels, c, beta=None, state_to_show=Non
     y = np.arange(0, PANEL_H + dx, dx)
     X, Y = np.meshgrid(x, y, indexing='ij')  # shape (n_x, n_y  )
 
-    U_arr = np.zeros_like(X)
-    U(U_arr, (X, Y), beta)
-
     wcpdi_maps = []
     for state in range(n_states):
+        U_arr = np.zeros_like(X)
+        U(U_arr, (X, Y), beta, panel_number=dataset.panel_number, state=state)
         P_arr = np.zeros_like(X)
         P(P_arr, (X, Y), state, dataset, model, beta)
         wcpdi_maps.append(WCPDI(P_arr, U_arr, c, (X, Y)))
@@ -288,14 +287,22 @@ def animate_panel_sidebyside(panel_number, model, n_pixels, c, beta=None, featur
     y = np.arange(0, PANEL_H + dx, dx)
     X, Y = np.meshgrid(x, y, indexing='ij')
 
-    U_arr = np.zeros_like(X)
-    U(U_arr, (X, Y), beta)
-
     wcpdi_maps = []
     for state in range(n_states):
+        U_arr = np.zeros_like(X)
+        U(U_arr, (X, Y), beta, panel_number=dataset.panel_number, state=state)
         P_arr = np.zeros_like(X)
         P(P_arr, (X, Y), state, dataset, model, beta)
         wcpdi_maps.append(WCPDI(P_arr, U_arr, c, (X, Y)))
+
+    # WCPDI at the known damage point vs. the panel-wide mean, tracked across states.
+    damage_point = DAMAGE_POINTS[panel_number]
+    if damage_point.ndim == 2:
+        damage_point = damage_point.mean(axis=0)
+    ix = int(np.clip(round(damage_point[0] / dx), 0, X.shape[0] - 1))
+    iy = int(np.clip(round(damage_point[1] / dx), 0, X.shape[1] - 1))
+    damage_vals = np.array([m[ix, iy] for m in wcpdi_maps])
+    mean_vals = np.array([m.mean() for m in wcpdi_maps])
 
     vmin_global = min(m.min() for m in wcpdi_maps)
     vmax_global = max(m.max() for m in wcpdi_maps)
@@ -304,7 +311,7 @@ def animate_panel_sidebyside(panel_number, model, n_pixels, c, beta=None, featur
     def _norm(m):
         return (m - vmin_global) / span_global
 
-    fig, (ax_norm, ax_adapt) = plt.subplots(1, 2, figsize=(12, 8))
+    fig, (ax_norm, ax_adapt, ax_line) = plt.subplots(1, 3, figsize=(18, 8))
     _draw_static_panel(ax_norm, panel_number)
     _draw_static_panel(ax_adapt, panel_number)
 
@@ -333,6 +340,17 @@ def animate_panel_sidebyside(panel_number, model, n_pixels, c, beta=None, featur
     title = ax_norm.text(0.5, 1.05, f"State 0/{n_states - 1}",
                          transform=ax_norm.transAxes, ha='center', va='bottom')
 
+    ax_line.plot(range(n_states), damage_vals, label='WCPDI at damage point',
+                 color='crimson', marker='o', markersize=3)
+    ax_line.plot(range(n_states), mean_vals, label='Mean WCPDI (panel)',
+                 color='steelblue', marker='o', markersize=3)
+    cursor_line = ax_line.axvline(0, color='black', linestyle='--', alpha=0.7)
+    ax_line.set_xlabel('State')
+    ax_line.set_ylabel('WCPDI Value')
+    ax_line.set_title('WCPDI at Damage Point vs Mean')
+    ax_line.legend()
+    ax_line.grid(True)
+
     fig.tight_layout()
 
     def update(state):
@@ -346,8 +364,10 @@ def animate_panel_sidebyside(panel_number, model, n_pixels, c, beta=None, featur
         im_adapt.set_clim(fmin, fmax)
         cbar_adapt.update_normal(im_adapt)
 
+        cursor_line.set_xdata([state, state])
+
         title.set_text(f"State {state}/{n_states - 1}")
-        return [im_norm, im_adapt, title]
+        return [im_norm, im_adapt, title, cursor_line]
 
     anim = animation.FuncAnimation(fig, update, frames=n_states, interval=200, blit=False)
 
@@ -421,7 +441,7 @@ if __name__ == "__main__":
    
 
     U_values = np.zeros((len(x), len(y)))
-    U(U_values, grid)
+    U(U_values, grid, panel_number=dataset_109.panel_number, state=0)
 
     plt.figure(figsize=(6, 8))
     plt.imshow(U_values.T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap='hot')

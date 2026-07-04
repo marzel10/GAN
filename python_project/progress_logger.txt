@@ -71,3 +71,8 @@ Single path features AE:
 - baseline subtracted from the monotonicity loss
 - noise parameter deleted (not helful)
 - reconstuction and latent pretty good in the features fc_AE
+
+4.07:
+- Adding more connections to the graph cause higher instability (dependence on the validation set) during Training
+- restricing the DI on the impact to be higher than mean DI of the whole panel from the beggining ruins the test performance 
+- test panel has 3 groups of points, each group has more or less the same level oh HI 

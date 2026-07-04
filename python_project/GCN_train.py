@@ -17,7 +17,8 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import torch_geometric
-from imagining_alghoritm import animate_panel, animate_panel_sidebyside
+from imagining_alghoritm import animate_panel, animate_panel_sidebyside, optimal_beta, MAX_DIST, U as _wcpdi_U, find_threshold as _wcpdi_find_threshold
+from plot_panel import SENSOR_POSITIONS, SENSOR_PAIRS, DAMAGE_POINTS, PANEL_W, PANEL_H
 
 def monotonicity_loss(values, state_ids, panel_ids):
     # values:    (batch_size, k) — one or more scalars per graph (e.g. HI, or per-path outputs)
@@ -70,6 +71,95 @@ def combined_path_loss(HI, out, state_ids, panel_ids):
 
     return monotonicity_loss(path_out, state_ids, panel_ids)
 
+_DAMAGE_MAP_GEOMETRY_CACHE = {}
+
+def _damage_map_geometry(n_pixels, beta, c):
+    # U()/find_threshold() are reused as-is from imagining_alghoritm.py: they only
+    # depend on panel geometry, not on the model's sHI output, so there's nothing
+    # to backprop through here. The per-path weight maps (W_stack) are re-derived
+    # with the same formula as U()'s internal loop, but kept as torch tensors so
+    # the sHI-weighted P map below stays differentiable.
+    key = (n_pixels, beta, c)
+    if key in _DAMAGE_MAP_GEOMETRY_CACHE:
+        return _DAMAGE_MAP_GEOMETRY_CACHE[key]
+
+    dA = (PANEL_W * PANEL_H) / n_pixels
+    dx = np.sqrt(dA)
+    x = np.arange(0, PANEL_W + dx, dx)
+    y = np.arange(0, PANEL_H + dx, dx)
+    grid = np.meshgrid(x, y, indexing='ij')
+    X, Y = grid
+
+    U_arr = np.zeros_like(X)
+    _wcpdi_U(U_arr, grid, beta)
+    thr = _wcpdi_find_threshold(U_arr, c, grid)
+    peak_U = U_arr.max()
+
+    W_maps = []
+    for a, b in SENSOR_PAIRS:
+        p1, p2 = SENSOR_POSITIONS[a - 1], SENSOR_POSITIONS[b - 1]
+        d1 = np.sqrt((X - p1[0]) ** 2 + (Y - p1[1]) ** 2)
+        d2 = np.sqrt((X - p2[0]) ** 2 + (Y - p2[1]) ** 2)
+        d = np.sqrt(((p1 - p2) ** 2).sum())
+        path_beta = beta if beta is not None else optimal_beta(d, MAX_DIST)
+        R = (d1 + d2) / d - 1
+        W_maps.append(np.where(R < path_beta, 1 - R / path_beta, 0.0))
+    W_stack = np.stack(W_maps, axis=0)  # (num_paths, nx, ny)
+
+    result = (dx, U_arr, thr * peak_U, peak_U, W_stack)
+    _DAMAGE_MAP_GEOMETRY_CACHE[key] = result
+    return result
+
+TOTAL_STATES = {
+    "103": 32,
+    "104": 58,
+    "105": 30,
+    "109": 28,
+    "123": 92,
+}
+
+def damage_map_loss(out, state_ids, panel_ids, n_pixels=400, c=0.9, beta=None):
+    # out:       (batch_size * num_paths, 1) — per-path sHI predictions, ordered graph then path
+    # panel_ids: (batch_size,) — panel identity of each graph, used to look up its damage point
+    #
+    # Builds the WCPDI spatial map (same weighting scheme as imagining_alghoritm's
+    # P/U/WCPDI) from the model's own per-path sHI predictions, then penalizes the
+    # map value at the panel's known damage point relative to the map's mean --
+    # using the same margin-of-10 scheme as monotonicity_loss (sHI runs
+    # high=healthy/low=damaged, so the damage point should sit ~10 below the mean).
+    out = out.reshape(-1)
+    num_paths = len(SENSOR_PAIRS)
+    batch_size = out.shape[0] // num_paths
+    path_out = out.reshape(batch_size, num_paths)
+
+    dx, U_arr, thr_val, peak_U, W_stack = _damage_map_geometry(n_pixels, beta, c)
+    W_stack = torch.tensor(W_stack, dtype=out.dtype, device=out.device)
+    U_map = torch.tensor(U_arr, dtype=out.dtype, device=out.device)
+
+    loss = out.sum() * 0.0
+    for i in range(batch_size):
+        panel_number = int(panel_ids[i].item())
+
+        P_map = (path_out[i].view(-1, 1, 1) * W_stack).sum(dim=0)
+        WCPDI_map = (P_map - thr_val) / (U_map / peak_U)
+        mean_WCPDI = WCPDI_map.mean()
+
+        damage_point = DAMAGE_POINTS[panel_number]
+        if damage_point.ndim == 2:
+            damage_point = damage_point.mean(axis=0)
+        ix = int(np.clip(round(damage_point[0] / dx), 0, WCPDI_map.shape[0] - 1))
+        iy = int(np.clip(round(damage_point[1] / dx), 0, WCPDI_map.shape[1] - 1))
+        damage_WCPDI = WCPDI_map[ix, iy]
+
+        diff = damage_WCPDI - mean_WCPDI
+        if state_ids[i] < TOTAL_STATES.get(str(panel_number), 0)*0.5:
+            continue
+        else:
+            loss = loss + ((diff + 10.0) ** 2 - 100.0)
+
+    return loss
+
+
 def plot_training_history(hist_dict, nr_epochs,save_dir=None):
 
     epochs = range(1, nr_epochs + 1)
@@ -79,18 +169,21 @@ def plot_training_history(hist_dict, nr_epochs,save_dir=None):
     global_val_loss_history = hist_dict['global_val_loss_history']
     path_loss_history = hist_dict['path_loss_history']
     path_val_loss_history = hist_dict['path_val_loss_history']
+    damage_loss_history = hist_dict.get('damage_loss_history')
+    damage_val_loss_history = hist_dict.get('damage_val_loss_history')
 
     # mark the lowest validation loss epoch
     lowest_val_epoch = torch.argmin(val_loss_history[:nr_epochs]).item() + 1
 
-    fig, ax = plt.subplots(1, 3, figsize=(18, 5))
+    has_damage_loss = damage_loss_history is not None
+    fig, ax = plt.subplots(1, 4 if has_damage_loss else 3, figsize=(24 if has_damage_loss else 18, 5))
     ax[0].plot(epochs, loss_history[:nr_epochs], label='Training Loss')
     ax[0].plot(epochs, val_loss_history[:nr_epochs], label='Validation Loss')
     ax[0].axvline(x=lowest_val_epoch, color='r', linestyle='--', label=f'Lowest Val Loss')
     ax[0].set_xlabel('Epoch')
     ax[0].set_ylabel('Total Loss')
     ax[0].set_title('Total Loss')
-    ax[0].legend()  
+    ax[0].legend()
 
     ax[1].plot(epochs, global_loss_history[:nr_epochs], label='Training Global Loss')
     ax[1].plot(epochs, global_val_loss_history[:nr_epochs], label='Validation Global Loss')
@@ -107,6 +200,15 @@ def plot_training_history(hist_dict, nr_epochs,save_dir=None):
     ax[2].set_ylabel('Path Loss')
     ax[2].set_title('Path Loss')
     ax[2].legend()
+
+    if has_damage_loss:
+        ax[3].plot(epochs, damage_loss_history[:nr_epochs], label='Training Damage Map Loss')
+        ax[3].plot(epochs, damage_val_loss_history[:nr_epochs], label='Validation Damage Map Loss')
+        ax[3].axvline(x=lowest_val_epoch, color='r', linestyle='--', label=f'Lowest Val Loss')
+        ax[3].set_xlabel('Epoch')
+        ax[3].set_ylabel('Damage Map Loss')
+        ax[3].set_title('Damage Map Loss')
+        ax[3].legend()
 
     plt.tight_layout()
     if save_dir is not None:
@@ -262,9 +364,11 @@ def train_with_features(f=3,val_panel=109,n_epochs=100,batch_size=15,lr=0.01,out
     loss_history = torch.zeros(n_epochs)
     global_loss_history = torch.zeros(n_epochs)
     path_loss_history = torch.zeros(n_epochs)
+    damage_loss_history = torch.zeros(n_epochs)
     val_loss_history = torch.zeros(n_epochs)
     global_val_loss_history = torch.zeros(n_epochs)
     path_val_loss_history = torch.zeros(n_epochs)
+    damage_val_loss_history = torch.zeros(n_epochs)
 
     epochs_done = 0
 
@@ -274,15 +378,17 @@ def train_with_features(f=3,val_panel=109,n_epochs=100,batch_size=15,lr=0.01,out
         total_loss = 0
         total_global_loss = 0
         total_path_loss = 0
+        total_damage_loss = 0
         for data in loader:
             data = data.to(device)
-            
+
             optimizer.zero_grad()
             out, HI = model(data.x, data.edge_index, data.batch, data.edge_weight)
 
             global_loss = monotonicity_loss(HI, data.y, data.panel)
             path_loss = combined_path_loss(HI, out, data.y, data.panel)
-            loss = global_loss + path_loss
+            damage_loss = damage_map_loss(out, data.y, data.panel)
+            loss = global_loss + path_loss #+ damage_loss
             #loss = combined_monotonicity_loss(HI, out, data.y, data.panel)
 
             loss.backward()
@@ -290,9 +396,11 @@ def train_with_features(f=3,val_panel=109,n_epochs=100,batch_size=15,lr=0.01,out
             total_loss += loss.item()
             total_global_loss += global_loss.item()
             total_path_loss += path_loss.item()
+            total_damage_loss += damage_loss.item()
         avg_loss = total_loss / len(loader)
         avg_global_loss = total_global_loss / len(loader)
         avg_path_loss = total_path_loss / len(loader)
+        avg_damage_loss = total_damage_loss / len(loader)
 
         # Validation
         model.eval()
@@ -300,6 +408,7 @@ def train_with_features(f=3,val_panel=109,n_epochs=100,batch_size=15,lr=0.01,out
             total_val_loss = 0
             total_global_val_loss = 0
             total_path_val_loss = 0
+            total_damage_val_loss = 0
             for val_data in val_loader:
                 val_data = val_data.to(device)
                 out_val, HI_val = model(val_data.x.to(device), val_data.edge_index.to(device), val_data.batch.to(device), val_data.edge_weight.to(device))
@@ -307,17 +416,20 @@ def train_with_features(f=3,val_panel=109,n_epochs=100,batch_size=15,lr=0.01,out
 
                 global_val_loss = monotonicity_loss(HI_val, val_data.y, val_data.panel)
                 path_val_loss = combined_path_loss(HI_val, out_val, val_data.y, val_data.panel)
-                loss_val = global_val_loss + path_val_loss
+                damage_val_loss = damage_map_loss(out_val, val_data.y, val_data.panel)
+                loss_val = global_val_loss + path_val_loss #+ damage_val_loss
                 #loss_val = combined_monotonicity_loss(HI_val, out_val, val_data.y, val_data.panel)
 
 
                 total_val_loss += loss_val.item()
                 total_global_val_loss += global_val_loss.item()
                 total_path_val_loss += path_val_loss.item()
+                total_damage_val_loss += damage_val_loss.item()
             avg_val_loss = total_val_loss / len(val_loader)
             avg_global_val_loss = total_global_val_loss / len(val_loader)
             avg_path_val_loss = total_path_val_loss / len(val_loader)
-        
+            avg_damage_val_loss = total_damage_val_loss / len(val_loader)
+
         #Save the model with the best validation loss
         if epoch == 0:
             best_val_loss = avg_val_loss
@@ -326,14 +438,16 @@ def train_with_features(f=3,val_panel=109,n_epochs=100,batch_size=15,lr=0.01,out
             if avg_val_loss < best_val_loss:
                 best_val_loss = avg_val_loss
                 torch.save({'model': model, 'feature_mean': feature_mean, 'feature_std': feature_std}, os.path.join(out_folder, net_name))
-        
-        
+
+
         loss_history[epoch] = avg_loss
         val_loss_history[epoch] = avg_val_loss
         global_loss_history[epoch] = avg_global_loss
         path_loss_history[epoch] = avg_path_loss
+        damage_loss_history[epoch] = avg_damage_loss
         global_val_loss_history[epoch] = avg_global_val_loss
         path_val_loss_history[epoch] = avg_path_val_loss
+        damage_val_loss_history[epoch] = avg_damage_val_loss
 
 
         print(f"Epoch: {epoch}, Loss: {avg_loss}, Val Loss: {avg_val_loss}")
@@ -343,9 +457,11 @@ def train_with_features(f=3,val_panel=109,n_epochs=100,batch_size=15,lr=0.01,out
         'loss_history': loss_history,
         'global_loss_history': global_loss_history,
         'path_loss_history': path_loss_history,
+        'damage_loss_history': damage_loss_history,
         'val_loss_history': val_loss_history,
         'global_val_loss_history': global_val_loss_history,
-        'path_val_loss_history': path_val_loss_history}
+        'path_val_loss_history': path_val_loss_history,
+        'damage_val_loss_history': damage_val_loss_history}
 
     if cross_validation:
         plot_output = os.path.join(out_folder, f"training_history_{net_name.split('.')[0]}_cv.png")

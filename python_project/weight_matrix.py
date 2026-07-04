@@ -69,20 +69,40 @@ def attention_matrix(States: states, state_idx: (int or str), freq_idx: int) -> 
 
 def find_crossings():
 
-    is_crossing = np.zeros((28, 28), dtype=bool)
+    is_crossing = np.zeros((28, 28), dtype=float)
     for i in range(28):
-        p1_i, p2_i = SENSOR_POSITIONS[SENSOR_PAIRS[i][0] - 1], SENSOR_POSITIONS[SENSOR_PAIRS[i][1] - 1]
+        sensors_i = SENSOR_PAIRS[i]
+        p1_i, p2_i = SENSOR_POSITIONS[sensors_i[0] - 1], SENSOR_POSITIONS[sensors_i[1] - 1]
+        path_i_vector = p2_i - p1_i
+        
         for j in range(i + 1, 28):
-            p1_j, p2_j = SENSOR_POSITIONS[SENSOR_PAIRS[j][0] - 1], SENSOR_POSITIONS[SENSOR_PAIRS[j][1] - 1]
+            sensors_j = SENSOR_PAIRS[j]
+            p1_j, p2_j = SENSOR_POSITIONS[sensors_j[0] - 1], SENSOR_POSITIONS[sensors_j[1] - 1]
+            path_j_vector = p2_j - p1_j
+            cos_theta = np.dot(path_i_vector, path_j_vector) / (np.linalg.norm(path_i_vector) * np.linalg.norm(path_j_vector)) # angle between the two paths
+            cos_theta = max(0.0, cos_theta)
+            if sensors_i[0] in sensors_j or sensors_i[1] in sensors_j: # Paths share a sensor
+                shared_sensor = sensors_i[0] if sensors_i[0] in sensors_j else sensors_i[1]
+                other_i = sensors_i[1] if shared_sensor == sensors_i[0] else sensors_i[0]
+                other_j = sensors_j[1] if shared_sensor == sensors_j[0] else sensors_j[0]
+                shared_pos = SENSOR_POSITIONS[shared_sensor - 1]
+                vec_i_away = SENSOR_POSITIONS[other_i - 1] - shared_pos
+                vec_j_away = SENSOR_POSITIONS[other_j - 1] - shared_pos
+                cos_theta_shared = np.dot(vec_i_away, vec_j_away) / (np.linalg.norm(vec_i_away) * np.linalg.norm(vec_j_away))
+                cos_theta_shared = max(0.0, cos_theta_shared)
+
+                is_crossing[i, j] = cos_theta_shared
+                is_crossing[j, i] = cos_theta_shared
+                continue
             denom = (p2_i[0] - p1_i[0]) * (p2_j[1] - p1_j[1]) - (p2_i[1] - p1_i[1]) * (p2_j[0] - p1_j[0])
             if denom == 0:
-                continue
+                continue  
             ua = ((p2_j[0] - p1_j[0]) * (p1_i[1] - p1_j[1]) - (p2_j[1] - p1_j[1]) * (p1_i[0] - p1_j[0])) / denom
             ub = ((p2_i[0] - p1_i[0]) * (p1_i[1] - p1_j[1]) - (p2_i[1] - p1_i[1]) * (p1_i[0] - p1_j[0])) / denom
-            eps = 1e-9
+            eps = 0
             if eps < ua < 1 - eps and eps < ub < 1 - eps:
-                is_crossing[i, j] = True
-                is_crossing[j, i] = True
+                is_crossing[i, j] = cos_theta + 1
+                is_crossing[j, i] = cos_theta + 1
 
     return is_crossing
 
@@ -95,44 +115,82 @@ FAILURES_RECORD ={
     "105": [16, 8]
 }
 
+def _global_failure_threshold(panel_key):
+    """Resolve the failure recorded for this panel as a GLOBAL state
+    threshold: (global_failed_state, failed_sensor), or None if no failure
+    is recorded for it.
+
+    For panel 123, FAILURES_RECORD is keyed by the subpanel the failure was
+    first observed in (e.g. "123_42"), but a physically broken sensor stays
+    broken for every later subpanel too -- so the recorded local state is
+    converted to a global one here, and the threshold applies to any
+    "123_*" panel_key, not just the one it was recorded against.
+    """
+    panel_key = str(panel_key)
+    if panel_key.startswith("123"):
+        for key, (local_state, sensor) in FAILURES_RECORD.items():
+            if key.startswith("123"):
+                start_idx = STATE_START_INDICES.get(key, 0)
+                return start_idx + local_state, sensor
+        return None
+    failure_info = FAILURES_RECORD.get(panel_key)
+    if failure_info is None:
+        return None
+    return tuple(failure_info)
+
+def failed_sensor_at(panel_number, state):
+    """Return the sensor id (1-8) that has failed by GLOBAL `state` for this
+    panel, or None if no failure applies yet (or ever). `state` must be the
+    global state index, consistent with how Panel_GraphDataset /
+    features_GraphDataset label states (including for panel 123)."""
+    threshold = _global_failure_threshold(panel_number)
+    if threshold is None:
+        return None
+    failed_state, failed_sensor = threshold
+    return failed_sensor if state >= failed_state else None
+
+def _paths_touching_sensor(sensor):
+    """Path indices (0-27) whose SENSOR_PAIRS entry includes this sensor id (1-8)."""
+    return {k for k, (a, b) in enumerate(SENSOR_PAIRS) if a == sensor or b == sensor}
+
 def adjencency_matrix(States, state_idx: (int or str), freq_idx: int) -> np.ndarray:
 
-    failure_info = FAILURES_RECORD.get(States.panel_name, None)
-    if failure_info is not None:
-        failure_state_idx, failure_sensor_idx = failure_info
-    
+    failure_threshold = _global_failure_threshold(States.panel_name)
+    failed_paths = _paths_touching_sensor(failure_threshold[1]) if failure_threshold is not None else None
+
     attention = attention_matrix(States, state_idx, freq_idx)
     if (attention == 0).all():
         print("Warning: Attention matrix is all zeros. Check if the attention values are correct.")
+
+    subpanel_start = STATE_START_INDICES.get(States.panel_name, 0) if States.panel_name.startswith("123") else 0
+
     if state_idx == ":":
         adjacency = np.zeros((States.num_states, 28, 28), dtype=float)
         for s in range(States.num_states):
+            global_s = s + subpanel_start
             for i in range(28):
                 for j in range(i + 1, 28):
-                    if IS_CROSSING[i, j]:
+                    if IS_CROSSING[i, j]>0:
 
-                        if failure_info is not None and s >= failure_state_idx and (i == failure_sensor_idx or j == failure_sensor_idx):
-                            # Skip the failed sensor for the affected states
+                        if failed_paths is not None and global_s >= failure_threshold[0] and (i in failed_paths or j in failed_paths):
+                            # Skip paths through the failed sensor for the affected states
                             continue
-                        adjacency[s, i, j] = attention[s, i, j]
-                        adjacency[s, j, i] = attention[s, i, j]
+                        adjacency[s, i, j] = attention[s, i, j] + IS_CROSSING[i, j]
+                        adjacency[s, j, i] = attention[s, i, j] + IS_CROSSING[i, j]
 
     else:
-        # match the state-index frame FAILURES_RECORD uses (relative to subpanel start for "123_*" panels)
-        local_state_idx = state_idx
-        if failure_info is not None and States.panel_name.startswith("123"):
-            start_idx = STATE_START_INDICES.get(States.panel_name, None)
-            local_state_idx = state_idx - start_idx if start_idx is not None else state_idx
-
+        # state_idx is GLOBAL by convention (attention_matrix shifts it to
+        # local internally when indexing this States object's own arrays)
         adjacency = np.zeros((28, 28), dtype=float)
         for i in range(28):
             for j in range(i + 1, 28):
-                if IS_CROSSING[i, j]:
-                    if failure_info is not None and local_state_idx >= failure_state_idx and (i == failure_sensor_idx or j == failure_sensor_idx):
-                        # Skip the failed sensor for the affected state
+                eps = 10e-6
+                if IS_CROSSING[i, j] > eps:
+                    if failed_paths is not None and state_idx >= failure_threshold[0] and (i in failed_paths or j in failed_paths):
+                        # Skip paths through the failed sensor for the affected state
                         continue
-                    adjacency[i, j] = attention[i, j]
-                    adjacency[j, i] = attention[i, j]
+                    adjacency[i, j] = attention[i, j] + IS_CROSSING[i, j]
+                    adjacency[j, i] = attention[i, j] + IS_CROSSING[i, j]
 
     return adjacency
 

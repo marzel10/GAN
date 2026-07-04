@@ -90,10 +90,10 @@ class Panel_GraphDataset(InMemoryDataset):
                 warnings.warn(f"Warning: Adjacency matrix for state {state} is all zeros. Check if the attention values are correct.")
             
             
-            adj_matrix = adj_matrix[connection_matrix==1]  # shape: num_edges
+            adj_matrix = adj_matrix[connection_matrix != 0]  # shape: num_edges
             edge_weight = torch.tensor((np.array(adj_matrix)), dtype=torch.float)
-            
-            # if you want to implement labels in the future 
+
+            # if you want to implement labels in the future
             # y = labels  # shape: pathsxoutput_dim
 
             data_list.append(Data(x=x, edge_index=edge_index, edge_weight=edge_weight,
@@ -161,7 +161,7 @@ class features_GraphDataset(InMemoryDataset):
                 current_state = states(str(_DATA_DIR / f"data/States_{self.panel_number}.mat"))
 
             adj_matrix = adjencency_matrix(current_state, state_idx=state, freq_idx=self.freq)  # shape: paths x paths
-            adj_matrix = adj_matrix[connection_matrix==1]  # shape: num_edges
+            adj_matrix = adj_matrix[connection_matrix != 0]  # shape: num_edges
             edge_weight = torch.tensor((np.array(adj_matrix)), dtype=torch.float)
             data_list.append(Data(x=x, edge_index=edge_index, edge_weight=edge_weight,
                                   y=torch.tensor([state], dtype=torch.long),

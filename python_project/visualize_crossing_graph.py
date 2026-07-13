@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import networkx as nx
 
-from weight_matrix import find_crossings
+from weight_matrix import find_crossings, adjencency_matrix
 from plot_panel import SENSOR_POSITIONS, SENSOR_PAIRS, PANEL_W, PANEL_H, DAMAGE_POINTS
 
 
@@ -116,6 +116,125 @@ def visualize(show_path_lines=True):
     print(f"Nodes: {G.number_of_nodes()}")
     print(f"Edges: {G.number_of_edges()}")
     print(f"Avg degree: {2 * G.number_of_edges() / G.number_of_nodes():.1f}")
+
+    fig.tight_layout()
+    plt.show()
+
+
+def build_adjacency_graph(States, state_idx, freq_idx):
+    """Weighted crossing graph for one state/frequency: edges only between
+    crossing paths, weighted by adjencency_matrix (attention + crossing)."""
+    adjacency = adjencency_matrix(States, state_idx, freq_idx)
+    if adjacency.ndim != 2:
+        raise ValueError(
+            f"visualize_adjacency needs a single state (got state_idx={state_idx!r}, "
+            f"which produced a {adjacency.ndim}D array). Pass one GLOBAL state index."
+        )
+    G = nx.Graph()
+    G.add_nodes_from(range(28))
+    rows, cols = np.nonzero(np.triu(adjacency))
+    for i, j in zip(rows, cols):
+        G.add_edge(int(i), int(j), weight=float(adjacency[i, j]))
+    return G, adjacency
+
+
+def visualize_adjacency(States, state_idx, freq_idx, show_path_lines=True):
+    """
+    Visualizes the weighted adjacency graph from weight_matrix.adjencency_matrix:
+      left  = graph drawn on the panel, edges colored/thickened by weight
+      right = adjacency matrix heatmap
+
+    state_idx : a single GLOBAL state index (int), not ":" — the adjacency
+                matrix is only 2D (drawable as one graph) for a single state.
+    """
+    G, adjacency = build_adjacency_graph(States, state_idx, freq_idx)
+    pos = node_positions()
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+
+    # --- left: weighted graph drawn on the panel ---
+    ax = axes[0]
+    rect = mpatches.Rectangle((0, 0), PANEL_W, PANEL_H,
+                               linewidth=1.5, edgecolor="black",
+                               facecolor="whitesmoke", zorder=0)
+    ax.add_patch(rect)
+
+    # sensor positions
+    ax.scatter(SENSOR_POSITIONS[:, 0], SENSOR_POSITIONS[:, 1],
+               s=80, color="steelblue", zorder=4)
+    for i, (x, y) in enumerate(SENSOR_POSITIONS, start=1):
+        ax.text(x, y + 0.006, f"S{i}", ha="center", va="bottom",
+                fontsize=8, color="steelblue", zorder=5)
+
+    # faint path lines for context
+    if show_path_lines:
+        for s1, s2 in SENSOR_PAIRS:
+            p1, p2 = SENSOR_POSITIONS[s1 - 1], SENSOR_POSITIONS[s2 - 1]
+            ax.plot([p1[0], p2[0]], [p1[1], p2[1]],
+                    color="lightgray", linewidth=0.8, zorder=1)
+
+    # weighted edges (color + thickness scale with adjacency weight)
+    weights = [G[i][j]["weight"] for i, j in G.edges()]
+    cmap = plt.get_cmap("plasma")
+    wmin = min(weights) if weights else 0.0
+    wmax = max(weights) if weights else 1.0
+    norm = plt.Normalize(vmin=wmin, vmax=wmax if wmax > wmin else wmin + 1e-9)
+
+    for i, j in G.edges():
+        w = G[i][j]["weight"]
+        xi, yi = pos[i]
+        xj, yj = pos[j]
+        ax.plot([xi, xj], [yi, yj], color=cmap(norm(w)),
+                linewidth=0.8 + 2.5 * norm(w), alpha=0.8, zorder=2)
+
+    # nodes (path midpoints)
+    node_x = [pos[k][0] for k in range(28)]
+    node_y = [pos[k][1] for k in range(28)]
+    ax.scatter(node_x, node_y, s=60, color="darkorange",
+               edgecolors="black", linewidths=0.5, zorder=3)
+    for k in range(28):
+        ax.text(pos[k][0], pos[k][1] + 0.005, str(k + 1),
+                ha="center", va="bottom", fontsize=6, color="black", zorder=6)
+
+    margin = 0.01
+    ax.set_xlim(-margin, PANEL_W + margin)
+    ax.set_ylim(-margin, PANEL_H + margin)
+    ax.set_aspect("equal")
+    ax.invert_xaxis()
+    ax.set_xlabel("x (m)")
+    ax.set_ylabel("y (m)")
+    ax.set_title(
+        f"Adjacency graph on panel (state {state_idx}, freq {freq_idx})\n"
+        f"{G.number_of_nodes()} nodes · {G.number_of_edges()} edges"
+    )
+
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    fig.colorbar(sm, ax=ax, label="Edge weight (attention + crossing)", shrink=0.8)
+
+    # legend
+    ax.scatter([], [], s=60, color="darkorange", edgecolors="black",
+               linewidths=0.5, label="Path node (midpoint)")
+    ax.plot([], [], color="lightgray", linewidth=0.8, label="Sensor path")
+    ax.legend(loc="upper right", fontsize=8)
+
+    # --- right: adjacency matrix as a heatmap ---
+    ax2 = axes[1]
+    im = ax2.imshow(adjacency, cmap="viridis")
+    fig.colorbar(im, ax=ax2, label="Adjacency weight", shrink=0.8)
+    tick_labels = [str(i + 1) for i in range(28)]
+    ax2.set_xticks(range(28))
+    ax2.set_xticklabels(tick_labels, rotation=90, fontsize=7)
+    ax2.set_yticks(range(28))
+    ax2.set_yticklabels(tick_labels, fontsize=7)
+    ax2.set_xlabel("Path index")
+    ax2.set_ylabel("Path index")
+    ax2.set_title("Adjacency matrix")
+
+    print(f"Nodes: {G.number_of_nodes()}")
+    print(f"Edges: {G.number_of_edges()}")
+    if G.number_of_edges():
+        print(f"Weight range: {wmin:.4f} to {wmax:.4f}")
 
     fig.tight_layout()
     plt.show()
@@ -365,7 +484,15 @@ def plot_panel_schematic(impact_points=None, ax=None, title="Panel schematic",
 
 if __name__ == "__main__":
     visualize()
-    visualize_path(23)
+    visualize_path(2)
+
+    # Example: weighted adjacency graph for one state/frequency of panel 123
+    from pathlib import Path
+    from states import states
+
+    _DATA_DIR = Path(__file__).resolve().parent
+    st_123_43 = states(str(_DATA_DIR / "data/States_123_43.mat"))
+    visualize_adjacency(st_123_43, state_idx=70, freq_idx=3)
 
     # Example: panel 123 with four impact cases
     impact_pts = {

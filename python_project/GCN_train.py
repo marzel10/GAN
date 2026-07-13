@@ -17,7 +17,7 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import torch_geometric
-from imagining_alghoritm import animate_panel, animate_panel_sidebyside, optimal_beta, MAX_DIST, U as _wcpdi_U, find_threshold as _wcpdi_find_threshold
+from imagining_alghoritm import  animate_panel_sidebyside, optimal_beta, MAX_DIST, U as _wcpdi_U, find_threshold as _wcpdi_find_threshold
 from plot_panel import SENSOR_POSITIONS, SENSOR_PAIRS, DAMAGE_POINTS, PANEL_W, PANEL_H
 
 def monotonicity_loss(values, state_ids, panel_ids):

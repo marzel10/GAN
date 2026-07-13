@@ -1,14 +1,25 @@
+import sys
+from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+for _sub in ("data", "models", "algorithms", "training", "viz", "scripts"):
+    _p = str(_PROJECT_ROOT / _sub)
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 import torch_geometric
 import numpy as np
 import torch
 
-from python_project.graph_dataset import Panel_GraphDataset
+from graph_dataset import Panel_GraphDataset
+from config import GRAPH_DATA_DIR, DEFAULT_FREQ_INDEX
 
 
 def prepare_DI(panels, model):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    datasets = [Panel_GraphDataset(root='graph_data', panel_number=panel, freq=3, big_latent=True) for panel in panels]
+    datasets = [Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=panel, freq=DEFAULT_FREQ_INDEX, big_latent=True) for panel in panels]
     model.eval()
     M = len(panels)
     DI = []

@@ -27,8 +27,21 @@ Summory of the architectures
 	Decoder mirrors encoder with UpSampling and Conv2DTranspose, 
 	with padding/cropping at the end to ensure output shape matches input shape.
 '''
+import sys
+from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+for _sub in ("data", "models", "algorithms", "training", "viz", "scripts"):
+    _p = str(_PROJECT_ROOT / _sub)
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 import tensorflow as tf
 import numpy as np
+
+from config import DEFAULT_K_SPARSE, DEFAULT_N_FEATURES
 
 
 class KSparse(tf.keras.layers.Layer):
@@ -50,7 +63,7 @@ def build_deep_fully_connected_network(params):
 	desired_latent_size = params.get("desired_latent_size", 15)
 	drop_rate = params.get("drop_rate", 0.1)
 	l2_reg = params.get("l2_reg", 1e-4)
-	k_sparse = params.get("k_sparse", 10)
+	k_sparse = params.get("k_sparse", DEFAULT_K_SPARSE)
 	hidden_layer_size1 = params["hidden_layer_size1"]
 	hidden_layer_size2 = params["hidden_layer_size2"]
 	hidden_layer_size3 = params["hidden_layer_size3"]
@@ -131,7 +144,7 @@ def build_CNN_variable_block(params):
 	desired_latent_size = params.get("desired_latent_size", 15)
 	drop_rate = params.get("drop_rate", 0.1)
 	l2_reg = params.get("l2_reg", 1e-4)
-	k_sparse = params.get("k_sparse", 10)
+	k_sparse = params.get("k_sparse", DEFAULT_K_SPARSE)
 	n_blocks = params.get("n_blocks", 1)
 
 	sizes = []
@@ -266,7 +279,7 @@ def build_fc_AE_features(params):
 
 	input_size = params.get("input_size", 19+14)  # total input width (single or doubled for benchmark)
 	n_features = params.get("n_features", input_size)  # single-channel feature count
-	k_sparse = params.get("k_sparse", 10)
+	k_sparse = params.get("k_sparse", DEFAULT_K_SPARSE)
 	has_benchmark = (input_size == n_features * 2)  # True when benchmark features are appended
 
 	he = tf.keras.initializers.HeNormal()
@@ -305,11 +318,11 @@ def build_CNN_AE_features(params):
 	Decoder: KSparse → Dense(n_feat*filters) → Reshape → Conv2DTranspose([1,2]) → squeeze
 	Output:  (batch, n_feat, n_channels)           matches input
 	'''
-	n_feat     = params.get("n_features", 33)
+	n_feat     = params.get("n_features", DEFAULT_N_FEATURES)
 	n_channels = params.get("n_channels", 1)   # 1 without benchmark, 2 with
 	filters    = params.get("filters", 16)
 	latent_dim = params.get("latent_dim", 16)
-	k_sparse   = params.get("k_sparse", 10)
+	k_sparse   = params.get("k_sparse", DEFAULT_K_SPARSE)
 	drop_rate  = params.get("drop_rate", 0.0)
 
 	he     = tf.keras.initializers.HeNormal()
@@ -359,7 +372,7 @@ if __name__ == "__main__":
 	# Check shapes and that the model can run a forward pass
 	params = params = {
             "drop_rate": 0.1,
-            "k_sparse": 10,
+            "k_sparse": DEFAULT_K_SPARSE,
             "filter1": 10,
             "filter2": 8,
             "filter3": 6,

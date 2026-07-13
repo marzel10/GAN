@@ -1,15 +1,27 @@
+import sys
+from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+for _sub in ("data", "models", "algorithms", "training", "viz", "scripts"):
+    _p = str(_PROJECT_ROOT / _sub)
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 import matplotlib.pyplot as plt
 from states import states
+from config import mat_file_path, DEFAULT_FREQ_INDEX
 
 # Load panels once
-st_103 = states(r"C:\Users\Maria\Documents\Honours Programme\Networks\GAN\python_project\data\States_103.mat")
-st_104 = states(r"C:\Users\Maria\Documents\Honours Programme\Networks\GAN\python_project\data\States_104.mat")
-st_105 = states(r"C:\Users\Maria\Documents\Honours Programme\Networks\GAN\python_project\data\States_105.mat")
-st_109 = states(r"C:\Users\Maria\Documents\Honours Programme\Networks\GAN\python_project\data\States_109.mat")
+st_103 = states(str(mat_file_path("103")))
+st_104 = states(str(mat_file_path("104")))
+st_105 = states(str(mat_file_path("105")))
+st_109 = states(str(mat_file_path("109")))
 
 
 state_idx = [0, 11, 20, 26]
-freq = 3
+freq = DEFAULT_FREQ_INDEX
 p_idx = 2
 
 
@@ -40,6 +52,6 @@ for st_idx in state_idx:
 
 plt.clf()
 
-st_123_41 = states(r"C:\Users\Maria\Documents\Honours Programme\Networks\GAN\python_project\data\States_123_41.mat")
-st_123_41.plot(st_123_41.num_states - 1, 3, 2, save_path="state_123_41.svg")
+st_123_41 = states(str(mat_file_path("123_41")))
+st_123_41.plot(st_123_41.num_states - 1, DEFAULT_FREQ_INDEX, 2, save_path="state_123_41.svg")
 plt.show()

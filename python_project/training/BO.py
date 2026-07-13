@@ -50,9 +50,13 @@ def log_mem(tag=""):
     rss = psutil.Process(os.getpid()).memory_info().rss
     print(f"[MEM {tag}] {rss / 1e9:.2f} GB")
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+for _sub in ("data", "models", "algorithms", "training", "viz", "scripts"):
+    _p = str(_PROJECT_ROOT / _sub)
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 import keras_tuner as kt
 import matplotlib.pyplot as plt
@@ -60,17 +64,20 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 
-from python_project.big_train import model_train, monotonicity_loss
-from python_project.fc_AE import (
+from big_train import model_train, monotonicity_loss
+from fc_AE import (
     build_CNN_variable_block,
     build_deep_fully_connected_network,
 )
-from python_project.results_viz import PlotContext, plot_sHI_vs_RUL
-from python_project.states_check import prepare_datastores
+from results_viz import PlotContext, plot_sHI_vs_RUL
+from states_check import prepare_datastores
+from config import (
+    K_SPARSE_PENALTY_WEIGHT, TRAIN_PANELS, VAL_PANELS, VAL_123_SUBPANELS,
+    TEST_123_SUBPANELS, BASE_PANELS, BO_RESULTS_DIR, BO_TUNER_DIR, BO_SEARCH_RESULTS_DIR,
+)
 
 
 # ─── Constants ────────────────────────────────────────────────────────────────
-K_SPARSE_PENALTY_WEIGHT = 0.1
 
 # HP columns reported in sensitivity / coverage plots, per model type.
 HP_COLS = {
@@ -87,17 +94,14 @@ HP_COLS = {
 }
 
 # Train / val / test split — these can be used if you don't want to do cross-validation
-TRAIN_DS_NAMES = ["103", "104", "105"]
-VAL_DS_NAMES = ["109"]
-TEST_DS_NAMES = [
-    "123_1", "123_31", "123_41", "123_43",
-    "123_2", "123_32", "123_42", "123_44",
-]
+TRAIN_DS_NAMES = TRAIN_PANELS
+VAL_DS_NAMES = VAL_PANELS
+TEST_DS_NAMES = VAL_123_SUBPANELS + TEST_123_SUBPANELS
 
-CV_PANELS = ["103", "104", "105", "109"]   # leave-one-out folds
+CV_PANELS = BASE_PANELS   # leave-one-out folds
 EPOCHS_PER_FOLD = 50
 
-MODEL_DB_DIR = "BO_results/"
+MODEL_DB_DIR = str(BO_RESULTS_DIR)
 
 
 # ─── HP helpers & k-sparse penalty ────────────────────────────────────────────
@@ -370,7 +374,7 @@ def run_bayesian_optimization(path_i, freq, model_type="fc_AE", max_trials=30, o
         model_building_function,
         objective=kt.Objective("mean_val_loss_penalized", direction="min"),
         max_trials=max_trials,
-        directory="tuner_dir",
+        directory=str(BO_TUNER_DIR),
         project_name="ae",
         overwrite=True,
         model_type=model_type,
@@ -382,7 +386,7 @@ def run_bayesian_optimization(path_i, freq, model_type="fc_AE", max_trials=30, o
     print(f"Bayesian optimization ({model_type}) completed in {t_elapsed}")
 
     date = pd.Timestamp.now().strftime("%Y_%m_%d-%H_%M_%S")
-    out_dir = f"results/Bayesian_{model_type}_{date}" if out_dir is None else out_dir
+    out_dir = str(BO_SEARCH_RESULTS_DIR / f"Bayesian_{model_type}_{date}") if out_dir is None else out_dir
     os.makedirs(out_dir, exist_ok=True)
 
     best = tuner.oracle.get_best_trials(1)[0]

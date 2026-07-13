@@ -5,6 +5,17 @@ This file:
 - includes a main block that demonstrates how to use these functions to plot the reconstructions and sHI values for different datasets and states, with options to save the plots.
 - defines a PlotContext dataclass to hold the datasets, targets, RULs, and state information for easy access within the plotting functions.
 '''
+import sys
+from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+for _sub in ("data", "models", "algorithms", "training", "viz", "scripts"):
+    _p = str(_PROJECT_ROOT / _sub)
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 from states_check import prepare_datastores
 from fc_AE import KSparse
 import matplotlib.pyplot as plt
@@ -14,6 +25,11 @@ import os
 from dataclasses import dataclass
 from typing import Dict, List, Any
 import matplotlib.gridspec as gridspec
+
+from config import (
+    TRAIN_PANELS, VAL_PANELS, TEST_PANELS, DEFAULT_FREQ_INDEX,
+    PROJECT_ROOT, ARCHIVE_DIR,
+)
 
 @dataclass(frozen=True)
 class PlotContext:
@@ -280,20 +296,20 @@ if __name__ == "__main__":
     base_batch_size = 30
     test_batch_size = 1
     path_i      = 0
-    frequency_i = 3
-    train_ds_names = ["103", "104", "105"]
-    val_ds_names   = ["109"]
-    test_ds_names  = ["123_1", "123_2", "123_31", "123_32", "123_41", "123_42", "123_43", "123_44"]
+    frequency_i = DEFAULT_FREQ_INDEX
+    train_ds_names = TRAIN_PANELS
+    val_ds_names   = VAL_PANELS
+    test_ds_names  = TEST_PANELS
     state_idx = 0      # which state to show in the reconstruction plot
-    save_dir  = r"C:\Users\Maria\Documents\Honours Programme\Networks\GAN\results\verification_plot_shi"
+    save_dir  = str(PROJECT_ROOT / "results" / "verification_plot_shi")
     splits_to_plot = ["train","validation", "test"]   # any subset of "train", "validation", "test"
 
     # ── Models to evaluate ────────────────────────────────────────────────────
     # Each entry: model .h5 path, whether it needs benchmark input, display name
     models_to_run = [
-        
+
         {
-            "path": r'C:\Users\Maria\Documents\Honours Programme\Networks\GAN\Model_for_every_path\Bayesian_CNN_AE_path0-02-05-23-55-deep_CNN_autoencoder13.4058.h5',
+            "path": str(ARCHIVE_DIR / "Model_for_every_path" / "Bayesian_CNN_AE_path0-02-05-23-55-deep_CNN_autoencoder13.4058.h5"),
             "include_benchmark": True,
             "name": "CNN_AE",
         },

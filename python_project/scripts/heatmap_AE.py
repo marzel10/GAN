@@ -1,5 +1,16 @@
 # This code generates heatmap on the panel using sHI from the autoencoder
 
+import sys
+from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+for _sub in ("data", "models", "algorithms", "training", "viz", "scripts"):
+    _p = str(_PROJECT_ROOT / _sub)
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 from matplotlib import animation
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import numpy as np
@@ -8,6 +19,10 @@ import matplotlib.pyplot as plt
 from imagining_alghoritm import P_AE, U, WCPDI
 from extract_shi import extract_shi
 from plot_panel import PANEL_H, PANEL_W, _draw_static_panel
+from config import (
+    MODELS_FEATURES_DIR, ARCHIVE_DIR, DEFAULT_FREQ_INDEX, DEFAULT_WCPDI_C,
+    DEFAULT_N_PIXELS, CMAP_HEATMAP,
+)
 
 
 def animate_panel_AE(panel_number, folders, freq, n_pixels, c, beta=None, state_to_show=None, features=False):
@@ -45,20 +60,20 @@ def animate_panel_AE(panel_number, folders, freq, n_pixels, c, beta=None, state_
 
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size="5%", pad=0.05)
-    im0 = ax.imshow(wcpdi_maps[0].T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap='hot', vmin=vmin, vmax=vmax)
+    im0 = ax.imshow(wcpdi_maps[0].T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap=CMAP_HEATMAP, vmin=vmin, vmax=vmax)
     fig.colorbar(im0, cax=cax, label='WCPDI Value')
     ax.set_title('WCPDI')
 
     divider_norm = make_axes_locatable(ax_norm)
     cax_norm = divider_norm.append_axes("right", size="5%", pad=0.05)
-    im0_norm = ax_norm.imshow((wcpdi_maps[0] / vmax).T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap='hot', vmin=0, vmax=1)
+    im0_norm = ax_norm.imshow((wcpdi_maps[0] / vmax).T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap=CMAP_HEATMAP, vmin=0, vmax=1)
     fig.colorbar(im0_norm, cax=cax_norm, label='Normalised WCPDI')
     ax_norm.set_title('Normalised WCPDI')
 
     frames = []
     for state, WCPDI_map in enumerate(wcpdi_maps):
-        im = ax.imshow(WCPDI_map.T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap='hot', vmin=vmin, vmax=vmax)
-        im_n = ax_norm.imshow((WCPDI_map / vmax).T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap='hot', vmin=0, vmax=1)
+        im = ax.imshow(WCPDI_map.T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap=CMAP_HEATMAP, vmin=vmin, vmax=vmax)
+        im_n = ax_norm.imshow((WCPDI_map / vmax).T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap=CMAP_HEATMAP, vmin=0, vmax=1)
         title = ax.text(0.5, 1.05, f"State {state}/{n_states - 1}",
                         transform=ax.transAxes, ha='center', va='bottom')
         frames.append([im, im_n, title])
@@ -68,12 +83,12 @@ def animate_panel_AE(panel_number, folders, freq, n_pixels, c, beta=None, state_
             _draw_static_panel(ax_s, panel_number)
             _draw_static_panel(ax_sn, panel_number)
 
-            im_s = ax_s.imshow(WCPDI_map.T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap='hot', vmin=vmin, vmax=vmax)
+            im_s = ax_s.imshow(WCPDI_map.T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap=CMAP_HEATMAP, vmin=vmin, vmax=vmax)
             div_s = make_axes_locatable(ax_s)
             fig_snap.colorbar(im_s, cax=div_s.append_axes("right", size="5%", pad=0.05), label='WCPDI Value')
             ax_s.set_title(f'WCPDI — State {state}')
 
-            im_sn = ax_sn.imshow((WCPDI_map / vmax).T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap='hot', vmin=vmin/vmax, vmax=1)
+            im_sn = ax_sn.imshow((WCPDI_map / vmax).T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap=CMAP_HEATMAP, vmin=vmin/vmax, vmax=1)
             div_sn = make_axes_locatable(ax_sn)
             fig_snap.colorbar(im_sn, cax=div_sn.append_axes("right", size="5%", pad=0.05), label='Normalised WCPDI')
             ax_sn.set_title(f'Normalised WCPDI — State {state}')
@@ -92,12 +107,12 @@ def animate_panel_AE(panel_number, folders, freq, n_pixels, c, beta=None, state_
 if __name__ == "__main__":
     features = False
     if features:
-        folders = ["models_features"]
+        folders = [str(MODELS_FEATURES_DIR)]
     else:
-        folders = ["Model_for_every_path"]
-    freq = 3
+        folders = [str(ARCHIVE_DIR / "Model_for_every_path")]
+    freq = DEFAULT_FREQ_INDEX
     beta = 0.7
-    c = 0.9
+    c = DEFAULT_WCPDI_C
     panel_number = 123
     dataset = str(panel_number)
 
@@ -111,7 +126,7 @@ if __name__ == "__main__":
     P_AE(P_values, grid, sHI_per_state, folders=folders, freq=freq, dataset=dataset, beta=beta, features=features)
 
     plt.figure(figsize=(6, 8))
-    plt.imshow(P_values.T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap='hot')
+    plt.imshow(P_values.T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap=CMAP_HEATMAP)
     plt.colorbar(label='Damage Probability')
     plt.title('Damage Probability Map (AE)')
     plt.xlabel('X Position')
@@ -122,7 +137,7 @@ if __name__ == "__main__":
     U(U_values, grid, beta)
 
     plt.figure(figsize=(6, 8))
-    plt.imshow(U_values.T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap='hot')
+    plt.imshow(U_values.T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap=CMAP_HEATMAP)
     plt.colorbar(label='Weight Sum')
     plt.title('Weight Map')
     plt.xlabel('X Position')
@@ -132,7 +147,7 @@ if __name__ == "__main__":
     WCPDI_map = WCPDI(P_values, U_values, c=c, grid=grid)
 
     plt.figure(figsize=(6, 8))
-    plt.imshow(WCPDI_map.T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap='hot')
+    plt.imshow(WCPDI_map.T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap=CMAP_HEATMAP)
     plt.colorbar(label='WCPDI Value')
     plt.title('WCPDI Map (AE)')
     plt.xlabel('X Position')
@@ -140,4 +155,4 @@ if __name__ == "__main__":
     plt.tight_layout()
     plt.show()
 
-    animate_panel_AE(panel_number=panel_number, folders=folders, freq=freq, n_pixels=10000, c=c, beta=beta, state_to_show=0, features=features)
+    animate_panel_AE(panel_number=panel_number, folders=folders, freq=freq, n_pixels=DEFAULT_N_PIXELS, c=c, beta=beta, state_to_show=0, features=features)

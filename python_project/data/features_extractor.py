@@ -3,12 +3,23 @@ frequency domain features from vibration signals.
 This code implements extraction of 19 time domain features and 14 frequency domain features.
 The class inherits from the states class 
 ''' 
+import sys
 from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+for _sub in ("data", "models", "algorithms", "training", "viz", "scripts"):
+    _p = str(_PROJECT_ROOT / _sub)
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 import numpy as np
 from states import states
 import tensorflow as tf
 import tensorflow_probability as tfp
+from config import BASE_PANELS, PANEL_123_SUBPANELS, mat_file_path, FEATURES_CACHE_DIR, DEFAULT_FREQ_INDEX
+
 class FeaturesExtractor(states):
     def __init__(self, mat_file):
         super().__init__(mat_file=mat_file)
@@ -370,13 +381,10 @@ class FeaturesExtractor(states):
 
 
 if __name__ == "__main__":
-    _DATA_DIR = Path(__file__).resolve().parent
-    mat_names = ["States_103.mat", "States_104.mat", "States_105.mat", "States_109.mat", "States_123_1.mat", "States_123_2.mat", "States_123_31.mat", "States_123_32.mat", "States_123_41.mat", "States_123_42.mat", "States_123_43.mat", "States_123_44.mat"]
-    
-    for mat_name in mat_names:
-        mat_file = str(_DATA_DIR / f"data/{mat_name}")
+    for panel_name in BASE_PANELS + PANEL_123_SUBPANELS:
+        mat_file = str(mat_file_path(panel_name))
         extractor = FeaturesExtractor(mat_file)
-        sampling_rate=1/extractor.dt()
-        features = extractor.extract_all_features(s_idx=":", freq=3, p_idx=":", sample_rate=sampling_rate, benchmark=True, cache_dir="features_cache")
-        print(f"Extracted features shape for {mat_name}: {features.shape}")
+        sampling_rate = 1 / extractor.dt()
+        features = extractor.extract_all_features(s_idx=":", freq=DEFAULT_FREQ_INDEX, p_idx=":", sample_rate=sampling_rate, benchmark=True, cache_dir=str(FEATURES_CACHE_DIR))
+        print(f"Extracted features shape for States_{panel_name}.mat: {features.shape}")
    

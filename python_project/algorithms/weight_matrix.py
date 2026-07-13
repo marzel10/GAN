@@ -6,15 +6,22 @@ This file:
 - defines the adjencency_matrix function to create an adjacency matrix for the graph dataset, where edges exist only between crossing paths and are weighted by the attention values
 - includes a main block that demonstrates how to compute and visualize the attention and adjacency matrices for a
 '''
+import sys
+from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+for _sub in ("data", "models", "algorithms", "training", "viz", "scripts"):
+    _p = str(_PROJECT_ROOT / _sub)
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 from states import states
 import numpy as np
 import matplotlib.pyplot as plt
-from pathlib import Path
 from plot_panel import SENSOR_POSITIONS, SENSOR_PAIRS
-
-
-NR_SAVED_STATES ={"123_1": 16, "123_2": 7, "123_31": 16, "123_32": 13, "123_41": 10, "123_42": 10, "123_43": 10, "123_44": 10}
-STATE_START_INDICES = {"123_1": 0, "123_2": 16, "123_31": 23, "123_32": 39, "123_41": 52, "123_42": 62, "123_43": 72, "123_44": 82}
+from config import NR_SAVED_STATES, STATE_START_INDICES, FAILURES_RECORD, mat_file_path, DEFAULT_FREQ_INDEX, CMAP_SEQUENTIAL, CMAP_BLUES
 
 def attention_matrix(States: states, state_idx: (int or str), freq_idx: int) -> np.ndarray:
     num_paths = States.num_pair
@@ -108,12 +115,7 @@ def find_crossings():
 
 IS_CROSSING = find_crossings()
 
-FAILURES_RECORD ={
-    # panel_name: [relative_state_idex, sensor_idex]
-    "123_42": [9,3],
-    "104": [15, 8],
-    "105": [16, 8]
-}
+# FAILURES_RECORD is owned by config.py; imported above.
 
 def _global_failure_threshold(panel_key):
     """Resolve the failure recorded for this panel as a GLOBAL state
@@ -197,11 +199,9 @@ def adjencency_matrix(States, state_idx: (int or str), freq_idx: int) -> np.ndar
 
 if __name__ == "__main__":
 
-    _DATA_DIR = Path(__file__).resolve().parent
-
-    st_103 = states(str(_DATA_DIR / "data/States_103.mat"))
+    st_103 = states(str(mat_file_path("103")))
     state_i = ":"
-    freq_i = 3
+    freq_i = DEFAULT_FREQ_INDEX
     attention_103 = attention_matrix(st_103, state_i, freq_i)
     if attention_103.ndim == 3:
         random_state_indices = np.random.choice(st_103.num_states, size=3, replace=False)
@@ -216,7 +216,7 @@ if __name__ == "__main__":
         fig, axes = plt.subplots(1, 3, figsize=(18,6))
         tick_labels = [f" {i+1}" for i in range(st_103.num_pair)]
         for ax, mat, idx in zip(axes, matrices, random_state_indices):
-            im = ax.imshow(mat, cmap="viridis", vmin=vmin, vmax=vmax)
+            im = ax.imshow(mat, cmap=CMAP_SEQUENTIAL, vmin=vmin, vmax=vmax)
             ax.set_title(f"State {idx}")
             ax.set_xticks(range(st_103.num_pair))
             ax.set_xticklabels(tick_labels, rotation=90)
@@ -227,7 +227,7 @@ if __name__ == "__main__":
         fig.suptitle("Attention Matrices for Panel 103")
     else:
         fig, ax = plt.subplots(figsize=(8, 6))
-        im = ax.imshow(attention_103, cmap="viridis")
+        im = ax.imshow(attention_103, cmap=CMAP_SEQUENTIAL)
         fig.colorbar(im, ax=ax, label="Attention Value",
                      ticks=np.linspace(0, 1, 6))
         ax.set_title("Attention Matrix for Panel 103")
@@ -248,7 +248,7 @@ if __name__ == "__main__":
 
     fig2, (ax_c, ax_a) = plt.subplots(1, 2, figsize=(14, 6))
 
-    im_c = ax_c.imshow(crossing, cmap="Blues", vmin=0, vmax=1)
+    im_c = ax_c.imshow(crossing, cmap=CMAP_BLUES, vmin=0, vmax=1)
     fig2.colorbar(im_c, ax=ax_c, label="Crosses (0/1)", ticks=[0, 1], shrink=0.8)
     ax_c.set_title("Path Crossing Matrix")
     ax_c.set_xlabel("Path Index")
@@ -258,7 +258,7 @@ if __name__ == "__main__":
     ax_c.set_yticks(range(st_103.num_pair))
     ax_c.set_yticklabels(tick_labels)
 
-    im_a = ax_a.imshow(adj, cmap="viridis")
+    im_a = ax_a.imshow(adj, cmap=CMAP_SEQUENTIAL)
     fig2.colorbar(im_a, ax=ax_a, label="Attention (crossing paths only)",
                   ticks=np.linspace(adj.min(), adj.max(), 6), shrink=0.8)
     ax_a.set_title(f"Adjacency Matrix (state {sample_idx})")

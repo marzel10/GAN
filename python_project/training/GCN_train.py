@@ -8,6 +8,17 @@ There is no cross validation implemented yet, only a single validation panel. Th
 You can train either with the big latent (the one used for reconstruction) or the sHI latent (the one we want to use for the GCN) by setting the big_latent argument in the train function. The default is False (train with sHI latent).
 '''
 
+import sys
+from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+for _sub in ("data", "models", "algorithms", "training", "viz", "scripts"):
+    _p = str(_PROJECT_ROOT / _sub)
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 import datetime
 import os
 
@@ -19,6 +30,11 @@ import matplotlib.pyplot as plt
 import torch_geometric
 from imagining_alghoritm import  animate_panel_sidebyside, optimal_beta, MAX_DIST, U as _wcpdi_U, find_threshold as _wcpdi_find_threshold
 from plot_panel import SENSOR_POSITIONS, SENSOR_PAIRS, DAMAGE_POINTS, PANEL_W, PANEL_H
+from config import (
+    TOTAL_STATES, GCN_MODELS_DIR, GRAPH_DATA_DIR, CROSS_VALIDATION_RESULTS_DIR,
+    DEFAULT_FREQ_INDEX, DEFAULT_WCPDI_C, DEFAULT_WCPDI_BETA, DEFAULT_N_PIXELS,
+    DEFAULT_N_FEATURES, BASE_PANELS,
+)
 
 def monotonicity_loss(values, state_ids, panel_ids):
     # values:    (batch_size, k) — one or more scalars per graph (e.g. HI, or per-path outputs)
@@ -110,15 +126,7 @@ def _damage_map_geometry(n_pixels, beta, c):
     _DAMAGE_MAP_GEOMETRY_CACHE[key] = result
     return result
 
-TOTAL_STATES = {
-    "103": 32,
-    "104": 58,
-    "105": 30,
-    "109": 28,
-    "123": 92,
-}
-
-def damage_map_loss(out, state_ids, panel_ids, n_pixels=400, c=0.9, beta=None):
+def damage_map_loss(out, state_ids, panel_ids, n_pixels=400, c=DEFAULT_WCPDI_C, beta=None):
     # out:       (batch_size * num_paths, 1) — per-path sHI predictions, ordered graph then path
     # panel_ids: (batch_size,) — panel identity of each graph, used to look up its damage point
     #
@@ -216,7 +224,7 @@ def plot_training_history(hist_dict, nr_epochs,save_dir=None):
     else:
         plt.show()
 
-def train(f=3,val_panel=109,n_epochs=100,batch_size=15,lr=0.01,out_folder="GCN_models",big_latent=False, seed=42):
+def train(f=DEFAULT_FREQ_INDEX,val_panel=109,n_epochs=100,batch_size=15,lr=0.01,out_folder=str(GCN_MODELS_DIR),big_latent=False, seed=42):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     torch.manual_seed(seed)
     if big_latent:
@@ -225,11 +233,11 @@ def train(f=3,val_panel=109,n_epochs=100,batch_size=15,lr=0.01,out_folder="GCN_m
         num_node_features = 1
     model = GraphCNN(num_node_features=num_node_features).to(device)
 
-    dataset_103 = Panel_GraphDataset(root='graph_data', panel_number=103, freq=f, big_latent=big_latent)
-    dataset_104 = Panel_GraphDataset(root='graph_data', panel_number=104, freq=f, big_latent=big_latent)
-    dataset_105 = Panel_GraphDataset(root='graph_data', panel_number=105, freq=f, big_latent=big_latent)
+    dataset_103 = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=103, freq=f, big_latent=big_latent)
+    dataset_104 = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=104, freq=f, big_latent=big_latent)
+    dataset_105 = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=105, freq=f, big_latent=big_latent)
 
-    dataset_109 = Panel_GraphDataset(root='graph_data', panel_number=109, freq=f, big_latent=big_latent)
+    dataset_109 = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=109, freq=f, big_latent=big_latent)
     
     dict_datasets = {"103": dataset_103, "104": dataset_104, "105": dataset_105, "109": dataset_109}
     val_dataset = dict_datasets[str(val_panel)]
@@ -325,18 +333,18 @@ def train(f=3,val_panel=109,n_epochs=100,batch_size=15,lr=0.01,out_folder="GCN_m
     else:
         torch.save(model, os.path.join(out_folder, "gcn.pt"))
 
-def train_with_features(f=3,val_panel=109,n_epochs=100,batch_size=15,lr=0.01,out_folder="GCN_models", net_name="gcn_features.pt", cross_validation=False, seed=42):
+def train_with_features(f=DEFAULT_FREQ_INDEX,val_panel=109,n_epochs=100,batch_size=15,lr=0.01,out_folder=str(GCN_MODELS_DIR), net_name="gcn_features.pt", cross_validation=False, seed=42):
     if not os.path.exists(out_folder):
         os.makedirs(out_folder)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     torch.manual_seed(seed)
-    num_node_features = 33
+    num_node_features = DEFAULT_N_FEATURES
     model = GraphCNN(num_node_features=num_node_features).to(device)
 
-    dataset_103 = features_GraphDataset(root='graph_data', panel_number=103, freq=f)
-    dataset_104 = features_GraphDataset(root='graph_data', panel_number=104, freq=f)
-    dataset_105 = features_GraphDataset(root='graph_data', panel_number=105, freq=f)
-    dataset_109 = features_GraphDataset(root='graph_data', panel_number=109, freq=f)
+    dataset_103 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=103, freq=f)
+    dataset_104 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=104, freq=f)
+    dataset_105 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=105, freq=f)
+    dataset_109 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=109, freq=f)
 
     dict_datasets = {"103": dataset_103, "104": dataset_104, "105": dataset_105, "109": dataset_109}
     val_dataset = dict_datasets[str(val_panel)]
@@ -673,20 +681,20 @@ def plot_sHI(model, dataset, path_idx):
 if __name__ == "__main__":
     features = True
     bl =True
-    validation_panels = [103,104,105,109]
+    validation_panels = [int(p) for p in BASE_PANELS]
 
     if features: 
-        dataset_103 = features_GraphDataset(root='graph_data', panel_number=103, freq=3)
-        dataset_104 = features_GraphDataset(root='graph_data', panel_number=104, freq=3)
-        dataset_105 = features_GraphDataset(root='graph_data', panel_number=105, freq=3)
-        dataset_109 = features_GraphDataset(root='graph_data', panel_number=109, freq=3)
-        dataset_123 = features_GraphDataset(root='graph_data', panel_number=123, freq=3)
+        dataset_103 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=103, freq=DEFAULT_FREQ_INDEX)
+        dataset_104 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=104, freq=DEFAULT_FREQ_INDEX)
+        dataset_105 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=105, freq=DEFAULT_FREQ_INDEX)
+        dataset_109 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=109, freq=DEFAULT_FREQ_INDEX)
+        dataset_123 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=123, freq=DEFAULT_FREQ_INDEX)
     else:
-        dataset_103 = Panel_GraphDataset(root='graph_data', panel_number=103, freq=3, big_latent=bl)
-        dataset_104 = Panel_GraphDataset(root='graph_data', panel_number=104, freq=3, big_latent=bl)
-        dataset_105 = Panel_GraphDataset(root='graph_data', panel_number=105, freq=3, big_latent=bl)
-        dataset_109 = Panel_GraphDataset(root='graph_data', panel_number=109, freq=3, big_latent=bl)
-        dataset_123 = Panel_GraphDataset(root='graph_data', panel_number=123, freq=3, big_latent=bl)
+        dataset_103 = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=103, freq=DEFAULT_FREQ_INDEX, big_latent=bl)
+        dataset_104 = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=104, freq=DEFAULT_FREQ_INDEX, big_latent=bl)
+        dataset_105 = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=105, freq=DEFAULT_FREQ_INDEX, big_latent=bl)
+        dataset_109 = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=109, freq=DEFAULT_FREQ_INDEX, big_latent=bl)
+        dataset_123 = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=123, freq=DEFAULT_FREQ_INDEX, big_latent=bl)
 
     dataset_dict = {
         103: dataset_103,
@@ -696,7 +704,7 @@ if __name__ == "__main__":
         123: dataset_123
     }  
     current_date = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    output_dir = f"Cross_Validation_Results/{current_date}"
+    output_dir = str(CROSS_VALIDATION_RESULTS_DIR / current_date)
 
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -741,11 +749,11 @@ if __name__ == "__main__":
 
     # Create 5 animation of panels using the ensemble model
     ensemble_model = torch.load(ensemble_model_path, weights_only=False)
-    animate_panel_sidebyside(panel_number=103, model=ensemble_model, n_pixels=10000, c=0.9, beta=0.5, features=features, transform=None, output_dir=output_dir, file_name=f"WCPDI_panel_103")
-    animate_panel_sidebyside(panel_number=104, model=ensemble_model, n_pixels=10000, c=0.9, beta=0.5, features=features, transform=None, output_dir=output_dir, file_name=f"WCPDI_panel_104")
-    animate_panel_sidebyside(panel_number=105, model=ensemble_model, n_pixels=10000, c=0.9, beta=0.5, features=features, transform=None, output_dir=output_dir, file_name=f"WCPDI_panel_105")
-    animate_panel_sidebyside(panel_number=109, model=ensemble_model, n_pixels=10000, c=0.9, beta=0.5, features=features, transform=None, output_dir=output_dir, file_name=f"WCPDI_panel_109")
-    animate_panel_sidebyside(panel_number=123, model=ensemble_model, n_pixels=10000, c=0.9, beta=0.5,  features=features, transform=None, output_dir=output_dir, file_name=f"WCPDI_panel_123")
+    animate_panel_sidebyside(panel_number=103, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, c=DEFAULT_WCPDI_C, beta=DEFAULT_WCPDI_BETA, features=features, transform=None, output_dir=output_dir, file_name=f"WCPDI_panel_103")
+    animate_panel_sidebyside(panel_number=104, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, c=DEFAULT_WCPDI_C, beta=DEFAULT_WCPDI_BETA, features=features, transform=None, output_dir=output_dir, file_name=f"WCPDI_panel_104")
+    animate_panel_sidebyside(panel_number=105, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, c=DEFAULT_WCPDI_C, beta=DEFAULT_WCPDI_BETA, features=features, transform=None, output_dir=output_dir, file_name=f"WCPDI_panel_105")
+    animate_panel_sidebyside(panel_number=109, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, c=DEFAULT_WCPDI_C, beta=DEFAULT_WCPDI_BETA, features=features, transform=None, output_dir=output_dir, file_name=f"WCPDI_panel_109")
+    animate_panel_sidebyside(panel_number=123, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, c=DEFAULT_WCPDI_C, beta=DEFAULT_WCPDI_BETA,  features=features, transform=None, output_dir=output_dir, file_name=f"WCPDI_panel_123")
     
         # shi Plots for example paths
         # plot_sHI(model, dataset_109, path_idx=0)

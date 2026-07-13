@@ -8,6 +8,17 @@ Edges = pairs of paths that physically cross (IS_CROSSING[i,j] == True).
 Run directly to show the plot.
 '''
 
+import sys
+from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+for _sub in ("data", "models", "algorithms", "training", "viz", "scripts"):
+    _p = str(_PROJECT_ROOT / _sub)
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
@@ -15,6 +26,7 @@ import networkx as nx
 
 from weight_matrix import find_crossings, adjencency_matrix
 from plot_panel import SENSOR_POSITIONS, SENSOR_PAIRS, PANEL_W, PANEL_H, DAMAGE_POINTS
+from config import mat_file_path, DEFAULT_FREQ_INDEX, CMAP_SEQUENTIAL, CMAP_BLUES
 
 
 def build_crossing_graph():
@@ -102,7 +114,7 @@ def visualize(show_path_lines=True):
 
     # --- right: IS_CROSSING matrix as a heatmap ---
     ax2 = axes[1]
-    im = ax2.imshow(is_crossing.astype(float), cmap="Blues", vmin=0, vmax=1)
+    im = ax2.imshow(is_crossing.astype(float), cmap=CMAP_BLUES, vmin=0, vmax=1)
     fig.colorbar(im, ax=ax2, ticks=[0, 1], label="Crosses (1 = yes)", shrink=0.8)
     tick_labels = [str(i + 1) for i in range(28)]
     ax2.set_xticks(range(28))
@@ -220,7 +232,7 @@ def visualize_adjacency(States, state_idx, freq_idx, show_path_lines=True):
 
     # --- right: adjacency matrix as a heatmap ---
     ax2 = axes[1]
-    im = ax2.imshow(adjacency, cmap="viridis")
+    im = ax2.imshow(adjacency, cmap=CMAP_SEQUENTIAL)
     fig.colorbar(im, ax=ax2, label="Adjacency weight", shrink=0.8)
     tick_labels = [str(i + 1) for i in range(28)]
     ax2.set_xticks(range(28))
@@ -487,12 +499,10 @@ if __name__ == "__main__":
     visualize_path(2)
 
     # Example: weighted adjacency graph for one state/frequency of panel 123
-    from pathlib import Path
     from states import states
 
-    _DATA_DIR = Path(__file__).resolve().parent
-    st_123_43 = states(str(_DATA_DIR / "data/States_123_43.mat"))
-    visualize_adjacency(st_123_43, state_idx=70, freq_idx=3)
+    st_123_43 = states(str(mat_file_path("123_43")))
+    visualize_adjacency(st_123_43, state_idx=70, freq_idx=DEFAULT_FREQ_INDEX)
 
     # Example: panel 123 with four impact cases
     impact_pts = {

@@ -1,6 +1,17 @@
 """This file defines the process of training of the autoencoders with cross validation (among 103, 104, 105 and 109)
 In order to be able to access real network performance"""
 
+import sys
+from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+for _sub in ("data", "models", "algorithms", "training", "viz", "scripts"):
+    _p = str(_PROJECT_ROOT / _sub)
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 import random
 
 import tensorflow as tf
@@ -14,6 +25,17 @@ from fc_AE import build_CNN_variable_block, build_deep_fully_connected_network, 
 from states import states
 from states_check import prepare_datastores
 from results_viz import plot_sHI_vs_RUL, PlotContext
+from config import (
+    BASE_PANELS, VAL_123_SUBPANELS, TEST_123_SUBPANELS, DEFAULT_FREQ_INDEX,
+    DEFAULT_K_SPARSE, DEFAULT_N_FEATURES, MODEL_TRAIN_RESULTS_DIR, MODEL_DATABASE_XLSX,
+)
+
+# This file's cross-validation default holds panel 103 out (distinct from
+# config.TRAIN_PANELS/VAL_PANELS, which hold 109 out) -- kept local since it
+# isn't shared with any other file.
+_DEFAULT_TRAIN_DS_NAMES = ["109", "105", "104"]
+_DEFAULT_VAL_DS_NAMES = ["103"]
+_DEFAULT_TEST_DS_NAMES = VAL_123_SUBPANELS + TEST_123_SUBPANELS
 
 
 def monotonicity_loss(y_true, y_pred):
@@ -57,12 +79,12 @@ def model_train(
         base_batch_size=30, 
         test_batch_size=1, 
         path_i=0, 
-        frequency_i=3, 
+        frequency_i=DEFAULT_FREQ_INDEX, 
         n_blocks=4,
-        train_ds_names=["109", "105", "104"], 
-        val_ds_names=["103"], 
-        test_ds_names=["123_1", "123_31", "123_41", "123_43","123_2", "123_32", "123_42", "123_44"], 
-        results_dir=f"model_train_results/multipath",
+        train_ds_names=_DEFAULT_TRAIN_DS_NAMES, 
+        val_ds_names=_DEFAULT_VAL_DS_NAMES, 
+        test_ds_names=_DEFAULT_TEST_DS_NAMES, 
+        results_dir=str(MODEL_TRAIN_RESULTS_DIR / "multipath"),
         seed=None,
     ):
     '''
@@ -110,7 +132,7 @@ def model_train(
             "hidden_layer_size4": 128,
             "desired_latent_size": 15,
             "drop_rate": 0.0,
-            "k_sparse": 10,
+            "k_sparse": DEFAULT_K_SPARSE,
             "input_size": 4000,
             "num_in": 1,
         }
@@ -120,7 +142,7 @@ def model_train(
        
         params = {
             "drop_rate": 0.0,
-            "k_sparse": 10,
+            "k_sparse": DEFAULT_K_SPARSE,
             "filter1": 5,
             "filter2": 2,
             "filter3": 32,
@@ -242,7 +264,7 @@ def model_train(
     }
 
     # --- SAVE TO EXCEL DATABASE ---
-    excel_path = f"model_database.xlsx"
+    excel_path = str(MODEL_DATABASE_XLSX)
     
     # Create a DataFrame from the single run
     df_new = pd.DataFrame([model_info])
@@ -275,11 +297,11 @@ def model_train_features(
         base_batch_size=30,
         test_batch_size=1,
         path_i=0,
-        frequency_i=3,
-        train_ds_names=["109", "105", "104"],
-        val_ds_names=["103"],
-        test_ds_names=["123_1", "123_31", "123_41", "123_43","123_2", "123_32", "123_42", "123_44"],
-        results_dir=f"model_train_results/features",
+        frequency_i=DEFAULT_FREQ_INDEX,
+        train_ds_names=_DEFAULT_TRAIN_DS_NAMES,
+        val_ds_names=_DEFAULT_VAL_DS_NAMES,
+        test_ds_names=_DEFAULT_TEST_DS_NAMES,
+        results_dir=str(MODEL_TRAIN_RESULTS_DIR / "features"),
         seed=None,
         filepath=None
     ):
@@ -308,7 +330,7 @@ def model_train_features(
 
     # Build model
     if net_type == 'fc_AE':
-        default_params = {"k_sparse": 10, "input_size": model_input_size, 'n_features': N_FEAT}
+        default_params = {"k_sparse": DEFAULT_K_SPARSE, "input_size": model_input_size, 'n_features': N_FEAT}
         if params is None:
             params = default_params
         else:
@@ -317,7 +339,7 @@ def model_train_features(
         model = build_fc_AE_features(params)
 
     elif net_type == 'CNN_AE':
-        default_params = {"k_sparse": 10, "n_features": N_FEAT, "n_channels": n_channels,
+        default_params = {"k_sparse": DEFAULT_K_SPARSE, "n_features": N_FEAT, "n_channels": n_channels,
                           "filters": 16, "latent_dim": 16}
         if params is None:
             params = default_params
@@ -439,7 +461,7 @@ def model_train_features(
     }
 
     # --- SAVE TO EXCEL DATABASE ---
-    excel_path = f"model_database.xlsx"
+    excel_path = str(MODEL_DATABASE_XLSX)
     
     # Create a DataFrame from the single run
     df_new = pd.DataFrame([model_info])
@@ -469,13 +491,13 @@ if __name__ == "__main__":
     seed = 42
     np.random.seed(seed)
     net_type = 'CNN_AE' #'fc_AE' # Options: 'fc_AE', 'CNN_AE'
-    basic_panels =["109", "105", "104", "103"] # panel that is used for validation 
+    basic_panels = BASE_PANELS # panel that is used for validation
     final_loss_list = []
     rec_train_loss_list = []
     lat_train_loss_list = []
     rec_val_loss_list = []
     lat_val_loss_list = []
-    features = False
+    features = True
     benchmark = True
     p_idx =0
     path_indexes = [0]  # Example path indexes to iterate over; adjust as needed
@@ -500,7 +522,7 @@ if __name__ == "__main__":
 
                 if features:
                     params = {
-                        "k_sparse": 10,
+                        "k_sparse": DEFAULT_K_SPARSE,
                         # input_size is overridden by model_train_features to match the datastore shape
                     }
                     model, history, final_loss, rec_loss_at_final, lat_loss_at_final, val_final_loss, val_rec_loss_at_final, val_lat_loss_at_final, model_info, ds_dict, target_dict, RUL_dict, States_dict, train_ds_names, val_ds_names, test_ds_names, results_dir = model_train_features(
@@ -514,7 +536,7 @@ if __name__ == "__main__":
                     latent_name = 'sHI'
 
                 else:
-                    model, history, final_loss, model_info, ds_dict, target_dict, RUL_dict, States_dict, train_ds_names, val_ds_names, test_ds_names, results_dir = model_train(net_type, path_i=0, epochs=100, n_blocks=2, train_ds_names=train_ds_names, val_ds_names=val_ds_names, seed=seed, results_dir=f"model_train_results/{pd.Timestamp.now().strftime('%Y-%m-%d_%H')}/{net_type}_panel_{panel}/")
+                    model, history, final_loss, model_info, ds_dict, target_dict, RUL_dict, States_dict, train_ds_names, val_ds_names, test_ds_names, results_dir = model_train(net_type, path_i=0, epochs=100, n_blocks=2, train_ds_names=train_ds_names, val_ds_names=val_ds_names, seed=seed, results_dir=str(MODEL_TRAIN_RESULTS_DIR / pd.Timestamp.now().strftime("%Y-%m-%d_%H") / f"{net_type}_panel_{panel}"))
 
                     recon_name = 'final_1' if net_type == 'CNN_AE' else 'fc_output_1'
                     latent_name = 'fc_latent_1'
@@ -617,7 +639,7 @@ if __name__ == "__main__":
 
                 if features:
                     params = {
-                        "k_sparse": 10,
+                        "k_sparse": DEFAULT_K_SPARSE,
                         # input_size is overridden by model_train_features to match the datastore shape
                     }
                     model, history, final_loss, rec_loss_at_final, lat_loss_at_final, val_final_loss, val_rec_loss_at_final, val_lat_loss_at_final, model_info, ds_dict, target_dict, RUL_dict, States_dict, train_ds_names, val_ds_names, test_ds_names, results_dir = model_train_features(
@@ -630,7 +652,7 @@ if __name__ == "__main__":
                     recon_name = 'reconstruction'
                     latent_name = 'sHI'
                 else:
-                    model, history, final_loss, model_info, ds_dict, target_dict, RUL_dict, States_dict, train_ds_names, val_ds_names, test_ds_names, results_dir = model_train(net_type, path_i=0, epochs=100, n_blocks=2, train_ds_names=train_ds_names, val_ds_names=val_ds_names, seed=seed, results_dir=f"model_train_results/{pd.Timestamp.now().strftime('%Y-%m-%d_%H')}/{net_type}_panel_{panel}/")
+                    model, history, final_loss, model_info, ds_dict, target_dict, RUL_dict, States_dict, train_ds_names, val_ds_names, test_ds_names, results_dir = model_train(net_type, path_i=0, epochs=100, n_blocks=2, train_ds_names=train_ds_names, val_ds_names=val_ds_names, seed=seed, results_dir=str(MODEL_TRAIN_RESULTS_DIR / pd.Timestamp.now().strftime("%Y-%m-%d_%H") / f"{net_type}_panel_{panel}"))
                     
                     recon_name = 'final_1' if net_type == 'CNN_AE' else 'fc_output_1'
                     latent_name = 'fc_latent_1'

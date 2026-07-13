@@ -3,14 +3,26 @@ This file:
 - defines extract_shi function 
 - creates raw data files with the latent values that can be used in the graph dataset
 '''
+import sys
+from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+for _sub in ("data", "models", "algorithms", "training", "viz", "scripts"):
+    _p = str(_PROJECT_ROOT / _sub)
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 import os
 import torch
 from fc_AE import KSparse
 import numpy as np
 import tensorflow as tf
 from states_check import prepare_simple_dataset
+from config import VALIDATION_PANEL_MAP, ARCHIVE_DIR, GRAPH_DATA_DIR, BASE_PANELS, DEFAULT_FREQ_INDEX
 
-def extract_shi(folders, freq, dataset, GAN_dir=r"C:\Users\Maria\Documents\Honours Programme\Networks\GAN", features=False, path_idx=None):
+def extract_shi(folders, freq, dataset, GAN_dir=str(ARCHIVE_DIR), features=False, path_idx=None):
     '''
     Extract sHI values from the trained autoencoder models for a given dataset and frequency.
     inputs:
@@ -29,7 +41,6 @@ def extract_shi(folders, freq, dataset, GAN_dir=r"C:\Users\Maria\Documents\Honou
     path_labels = []
     big_latent_all = []
 
-    VALIDATION_PANEL_MAP = {'123': '109'}
     model_panel = VALIDATION_PANEL_MAP.get(dataset, dataset)
 
     for folder in folders:
@@ -81,10 +92,10 @@ def extract_shi(folders, freq, dataset, GAN_dir=r"C:\Users\Maria\Documents\Honou
 if __name__ == "__main__":
 
     folders = ["Model_for_every_path"]
-    datasets = ['103', '104', '105', '109','123']
-   
-    freq = 3
-    for dataset in datasets: 
+    datasets = BASE_PANELS + ["123"]
+
+    freq = DEFAULT_FREQ_INDEX
+    for dataset in datasets:
         latents_all, path_labels, big_latent_all = extract_shi(folders, freq, dataset)
         print(f"Collected latents for {len(latents_all)} paths.")
         print(f"Shape of latents matrix: {np.array(latents_all).shape}")
@@ -92,5 +103,5 @@ if __name__ == "__main__":
         print(f"Big latent shape: {np.array(big_latent_all).shape}")
 
         out_dict ={"shi": np.array(latents_all), "path_labels": np.array(path_labels), "big_latent": np.array(big_latent_all)}
-        folder = r"graph_data\raw"
+        folder = GRAPH_DATA_DIR / "raw"
         torch.save(out_dict, os.path.join(folder, f"panel_{dataset}_shi_raw_{freq}.pt"))

@@ -8,6 +8,17 @@ This file:
 If you do any changes in the process method, make sure to delete the processed files to trigger re-processing with the new code.
 '''
 
+import sys
+from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+for _sub in ("data", "models", "algorithms", "training", "viz", "scripts"):
+    _p = str(_PROJECT_ROOT / _sub)
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 import warnings
 # format error messages with panel and state information for easier debugging
 warnings.formatwarning = lambda msg, *_, **__: f"Warning: {msg}\n"
@@ -18,11 +29,8 @@ from weight_matrix import find_crossings, adjencency_matrix
 import numpy as np
 from states_check import states, sampling_rate
 from features_extractor import FeaturesExtractor
-from pathlib import Path
+from config import NR_SAVED_STATES, STATE_START_INDICES, mat_file_path, GRAPH_DATA_DIR, FEATURES_CACHE_DIR, DEFAULT_FREQ_INDEX, PANEL_123_SUBPANELS
 
-
-NR_SAVED_STATES ={"123_1": 16, "123_2": 7, "123_31": 16, "123_32": 13, "123_41": 10, "123_42": 10, "123_43": 10, "123_44": 10}
-STATE_START_INDICES = {"123_1": 0, "123_2": 16, "123_31": 23, "123_32": 39, "123_41": 52, "123_42": 62, "123_43": 72, "123_44": 82}
 class Panel_GraphDataset(InMemoryDataset):
     def __init__(self, root, panel_number,freq, big_latent=False, transform=None, pre_transform=None):
         self.panel_number = panel_number
@@ -66,8 +74,6 @@ class Panel_GraphDataset(InMemoryDataset):
             edge_index = torch.tensor(np.array(np.nonzero(connection_matrix)), dtype=torch.long)  # shape: 2 x num_edges
 
 
-            _DATA_DIR = Path(__file__).resolve().parent
-
             if str(self.panel_number) == "123" :
                     # find which subpanel this state belongs to
                     subpanel = None
@@ -80,9 +86,9 @@ class Panel_GraphDataset(InMemoryDataset):
                             break
                     if subpanel is None:
                         raise ValueError(f"State index {state} does not belong to any known subpanel.")
-                    current_state = states(str(_DATA_DIR / f"data/States_{subpanel}.mat"))
+                    current_state = states(str(mat_file_path(subpanel)))
             else:
-                current_state = states(str(_DATA_DIR / f"data/States_{self.panel_number}.mat"))
+                current_state = states(str(mat_file_path(self.panel_number)))
 
             adj_matrix = adjencency_matrix(current_state, state_idx=state, freq_idx=self.freq)  # shape: paths x paths
 
@@ -115,9 +121,9 @@ class features_GraphDataset(InMemoryDataset):
     def raw_file_names(self):
         if self.panel_number == 123:
             #return list of all subpanels
-            return [f"features_cache/States_{sp}_freq{self.freq}_all_paths.npy" for sp in ["123_1", "123_2", "123_31", "123_32", "123_41", "123_42", "123_43", "123_44"]]
+            return [str(FEATURES_CACHE_DIR / f"States_{sp}_freq{self.freq}_all_paths.npy") for sp in PANEL_123_SUBPANELS]
         else:
-            return [f"features_cache/States_{self.panel_number}_freq{self.freq}_all_paths.npy"]
+            return [str(FEATURES_CACHE_DIR / f"States_{self.panel_number}_freq{self.freq}_all_paths.npy")]
     
     @property
     def processed_file_names(self):
@@ -143,7 +149,6 @@ class features_GraphDataset(InMemoryDataset):
             # Create edge weights
             connection_matrix = find_crossings()
             edge_index = torch.tensor(np.array(np.nonzero(connection_matrix)), dtype=torch.long)
-            _DATA_DIR = Path(__file__).resolve().parent
             if str(self.panel_number) == "123" :
                     # find which subpanel this state belongs to
                     subpanel = None
@@ -156,9 +161,9 @@ class features_GraphDataset(InMemoryDataset):
                             break
                     if subpanel is None:
                         raise ValueError(f"State index {state} does not belong to any known subpanel.")
-                    current_state = states(str(_DATA_DIR / f"data/States_{subpanel}.mat"))
+                    current_state = states(str(mat_file_path(subpanel)))
             else:
-                current_state = states(str(_DATA_DIR / f"data/States_{self.panel_number}.mat"))
+                current_state = states(str(mat_file_path(self.panel_number)))
 
             adj_matrix = adjencency_matrix(current_state, state_idx=state, freq_idx=self.freq)  # shape: paths x paths
             adj_matrix = adj_matrix[connection_matrix != 0]  # shape: num_edges
@@ -177,11 +182,11 @@ class features_GraphDataset(InMemoryDataset):
 
 if __name__ == "__main__":
     '''
-    dataset_109 = Panel_GraphDataset(root='graph_data', panel_number=109, freq=3, big_latent=True)
+    dataset_109 = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=109, freq=DEFAULT_FREQ_INDEX, big_latent=True)
     print(f"Dataset loaded with {len(dataset_109)} states.")
     print(f"Example graph data for state 0: {dataset_109[0]}")
     '''
 
-    dataset_109_features = features_GraphDataset(root='graph_data', panel_number=103, freq=3)
+    dataset_109_features = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=103, freq=DEFAULT_FREQ_INDEX)
     print(f"Dataset loaded with {len(dataset_109_features)} states.")
     print(f"Example graph data for state 0: {dataset_109_features[0]}")

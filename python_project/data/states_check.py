@@ -10,17 +10,24 @@ import sys
 from pathlib import Path
 import warnings
 
-# Allow running this file directly (e.g., `python python_project/states_check.py`)
-# by ensuring the repository root is on sys.path.
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+for _sub in ("data", "models", "algorithms", "training", "viz", "scripts"):
+    _p = str(_PROJECT_ROOT / _sub)
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
-from python_project.states import states
-from features_extractor import FeaturesExtractor 
+from states import states
+from features_extractor import FeaturesExtractor
 import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
+
+from config import (
+    BASE_PANELS, PANEL_123_SUBPANELS, VAL_123_SUBPANELS, TEST_123_SUBPANELS,
+    mat_file_path, DEFAULT_FREQ_INDEX,
+)
 
 
 def compute_weibull_health(N):
@@ -90,40 +97,14 @@ def make_ds_features(arr, N, batch_size, state_idx=None):
     return ds.map(_pack).batch(batch_size, drop_remainder=False), weibul.numpy()
 
 
-_DATA_DIR = Path(__file__).resolve().parent
+ds_names = BASE_PANELS + PANEL_123_SUBPANELS
 
-st_103 = states(str(_DATA_DIR / "data/States_103.mat"))
-st_104 = states(str(_DATA_DIR / "data/States_104.mat"))
-st_105 = states(str(_DATA_DIR / "data/States_105.mat"))
-st_109 = states(str(_DATA_DIR / "data/States_109.mat"))
-st_123_1 = states(str(_DATA_DIR / "data/States_123_1.mat"))
-st_123_2 = states(str(_DATA_DIR / "data/States_123_2.mat"))
-st_123_31 = states(str(_DATA_DIR / "data/States_123_31.mat"))
-st_123_32 = states(str(_DATA_DIR / "data/States_123_32.mat"))
-st_123_41 = states(str(_DATA_DIR / "data/States_123_41.mat"))
-st_123_42 = states(str(_DATA_DIR / "data/States_123_42.mat"))
-st_123_43 = states(str(_DATA_DIR / "data/States_123_43.mat"))
-st_123_44 = states(str(_DATA_DIR / "data/States_123_44.mat"))
-sampling_rate = 1/st_103.dt()
+states_list = [states(str(mat_file_path(name))) for name in ds_names]
+features_list = [FeaturesExtractor(str(mat_file_path(name))) for name in ds_names]
 
-
-f_103 = FeaturesExtractor(str(_DATA_DIR / "data/States_103.mat"))
-f_104 = FeaturesExtractor(str(_DATA_DIR / "data/States_104.mat"))
-f_105 = FeaturesExtractor(str(_DATA_DIR / "data/States_105.mat"))
-f_109 = FeaturesExtractor(str(_DATA_DIR / "data/States_109.mat"))
-f_123_1 = FeaturesExtractor(str(_DATA_DIR / "data/States_123_1.mat"))      
-f_123_2 = FeaturesExtractor(str(_DATA_DIR / "data/States_123_2.mat"))
-f_123_31 = FeaturesExtractor(str(_DATA_DIR / "data/States_123_31.mat"))
-f_123_32 = FeaturesExtractor(str(_DATA_DIR / "data/States_123_32.mat"))
-f_123_41 = FeaturesExtractor(str(_DATA_DIR / "data/States_123_41.mat"))
-f_123_42 = FeaturesExtractor(str(_DATA_DIR / "data/States_123_42.mat"))
-f_123_43 = FeaturesExtractor(str(_DATA_DIR / "data/States_123_43.mat"))
-f_123_44 = FeaturesExtractor(str(_DATA_DIR / "data/States_123_44.mat"))    
-
-
-states_list = [st_103, st_104, st_105, st_109, st_123_1, st_123_2, st_123_31, st_123_32, st_123_41, st_123_42, st_123_43, st_123_44]
-features_list = [f_103, f_104, f_105, f_109, f_123_1, f_123_2, f_123_31, f_123_32, f_123_41, f_123_42, f_123_43, f_123_44]
-ds_names = ["103", "104", "105", "109", "123_1", "123_2", "123_31", "123_32", "123_41", "123_42", "123_43", "123_44"]
+st_103, st_104, st_105, st_109, st_123_1, st_123_2, st_123_31, st_123_32, st_123_41, st_123_42, st_123_43, st_123_44 = states_list
+f_103, f_104, f_105, f_109, f_123_1, f_123_2, f_123_31, f_123_32, f_123_41, f_123_42, f_123_43, f_123_44 = features_list
+sampling_rate = 1 / st_103.dt()
     
 
 def prepare_simple_dataset(path_i, freq_i, panel_name,batch_size=1,include_benchmark=False, features=False):
@@ -325,15 +306,15 @@ def prepare_datastores(path_i, freq_i, base_batch_size, test_batch_size, train_d
 
 if __name__ == "__main__":
 
-    freq = 3
+    freq = DEFAULT_FREQ_INDEX
     path_i = 0
     base_batch_size = 30
     test_batch_size = 1
 
     # Training datasets
-    train_ds_names = ["103", "104", "105", "109"]
-    val_ds_names = ["123_1", "123_31", "123_41", "123_43"] 
-    test_ds_names = ["123_2", "123_32", "123_42", "123_44"]
+    train_ds_names = BASE_PANELS
+    val_ds_names = VAL_123_SUBPANELS
+    test_ds_names = TEST_123_SUBPANELS
 
     include_benchmark = True
     features = True

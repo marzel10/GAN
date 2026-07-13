@@ -8,6 +8,17 @@ The panel geometry and sensor positions are defined as constants at the top of t
 
 '''
 
+import sys
+from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+for _sub in ("data", "models", "algorithms", "training", "viz", "scripts"):
+    _p = str(_PROJECT_ROOT / _sub)
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
@@ -15,33 +26,10 @@ import matplotlib.colors as mcolors
 from matplotlib.animation import FuncAnimation
 from itertools import combinations
 
-# Panel geometry (metres)
-PANEL_W = 0.165   # 165 mm
-PANEL_H = 0.240   # 240 mm
-
-# Sensor positions in metres (1-indexed, matches MATLAB SP_table order)
-SENSOR_POSITIONS = np.array([
-    [0.025,  0.025],   # S1
-    [0.100,  0.025],   # S2
-    [0.140,  0.215],   # S3
-    [0.065,  0.215],   # S4
-    [0.025,  0.120],   # S5
-    [0.140,  0.120],   # S6
-    [0.0825, 0.080],   # S7
-    [0.0825, 0.160],   # S8
-])
-
-# All 28 unique sensor-pair paths, path index k → SENSOR_PAIRS[k-1]
-SENSOR_PAIRS = [(i, j) for i, j in combinations(range(1, 9), 2)]  # 1-indexed
-
-# Known impact positions (metres) per panel
-DAMAGE_POINTS = {
-    103: np.array([0.050,  0.080]),
-    104: np.array([0.025,  0.080]),
-    105: np.array([0.115,  0.160]),   # (165-50, 240-80) mm
-    109: np.array([0.0825, 0.140]),   # (165-82.5, 240-100) mm
-    123: np.array([[0.0825-0.03,0.045],[0.0825,0.045],[0.0825-0.03,0.045+0.03],[0.0825,0.045+0.03]]),   # square debond surface
-}
+# Panel geometry, sensor positions, and damage points are owned by config.py
+# (single source of truth); re-exported here so existing `from plot_panel
+# import SENSOR_PAIRS` etc. call sites keep working unchanged.
+from config import PANEL_W, PANEL_H, SENSOR_POSITIONS, SENSOR_PAIRS, DAMAGE_POINTS, CMAP_DIVERGING
 
 
 
@@ -86,7 +74,7 @@ def _draw_static_panel(ax, panel_number):
 
 
 def animate_panel_sHI(panel_number, path_indices, sHI_matrix,
-                      interval=150, cmap="plasma", save_path=None):
+                      interval=150, cmap=CMAP_DIVERGING, save_path=None):
     """
     Animate sHI values on the panel paths over states.
 

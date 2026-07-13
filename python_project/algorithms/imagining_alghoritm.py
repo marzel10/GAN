@@ -13,6 +13,17 @@ important functions:
 - animate_panel(panel_number, model, n_pixels, beta, c): creates an animation of the WCPDI map over the states for a given panel using the trained GCN model
 '''
 
+import sys
+from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+for _sub in ("data", "models", "algorithms", "training", "viz", "scripts"):
+    _p = str(_PROJECT_ROOT / _sub)
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 import os
 
 from matplotlib import animation
@@ -28,10 +39,10 @@ from graph_dataset import Panel_GraphDataset, features_GraphDataset
 from extract_shi import extract_shi
 
 from weight_matrix import failed_sensor_at
-
-T = 0.001 * 10e-3
-v = 62500
-MAX_DIST = v * T
+from config import (
+    MAX_DIST, GRAPH_DATA_DIR, ANIMATIONS_DIR, GCN_MODELS_DIR, DEFAULT_FREQ_INDEX,
+    DEFAULT_WCPDI_C, DEFAULT_N_PIXELS, CMAP_HEATMAP,
+)
 
 def P(P_arr, grid, state, dataset, model, beta=None):
     X, Y = grid                          # both shape (100, 100)
@@ -174,97 +185,6 @@ def plot_HI(model, dataset, title="HI vs State Index", save_path=None):
     plt.show()
 
 
-'''
-def animate_panel(panel_number, model, n_pixels, c, beta=None, state_to_show=None, features=False, transform=None, show_snap=False, output_dir="animations", file_name=None):
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    # find dataset
-    if features:
-        dataset = features_GraphDataset(root='graph_data', panel_number=panel_number, freq=3)
-    else:
-        dataset = Panel_GraphDataset(root='graph_data', panel_number=panel_number, freq=3, big_latent=True)
-    if transform is not None:
-        dataset.transform = transform
-    n_states = len(dataset)
-    model = model.to(device)
-
-    dA = (PANEL_W*PANEL_H) / n_pixels
-    dx = np.sqrt(dA)
-    x = np.arange(0, PANEL_W + dx, dx)
-    y = np.arange(0, PANEL_H + dx, dx)
-    X, Y = np.meshgrid(x, y, indexing='ij')  # shape (n_x, n_y  )
-
-    wcpdi_maps = []
-    for state in range(n_states):
-        U_arr = np.zeros_like(X)
-        U(U_arr, (X, Y), beta, panel_number=dataset.panel_number, state=state)
-        P_arr = np.zeros_like(X)
-        P(P_arr, (X, Y), state, dataset, model, beta)
-        wcpdi_maps.append(WCPDI(P_arr, U_arr, c, (X, Y)))
-
-    vmin = min(m.min() for m in wcpdi_maps)
-    vmax = max(m.max() for m in wcpdi_maps)
-    if vmax == vmin:
-        vmax = vmin + 1.0
-
-    span = vmax - vmin
-
-    def _norm(m):
-        return (m - vmin) / span
-
-    fig, (ax, ax_norm) = plt.subplots(1, 2, figsize=(12, 8))
-    _draw_static_panel(ax, panel_number)
-    _draw_static_panel(ax_norm, panel_number)
-
-    #Plot WCPDI map
-    divider = make_axes_locatable(ax)
-    cax = divider.append_axes("right", size="5%", pad=0.05)
-    im0 = ax.imshow(wcpdi_maps[0].T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap='hot')
-    fig.colorbar(im0, cax=cax, label='WCPDI Value')
-    ax.set_title('WCPDI')
-
-    # Plot normalized WCPDI map
-    divider_norm = make_axes_locatable(ax_norm)
-    cax_norm = divider_norm.append_axes("right", size="5%", pad=0.05)
-    im0_norm = ax_norm.imshow(_norm(wcpdi_maps[0]).T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap='hot', vmin=0, vmax=1)
-    fig.colorbar(im0_norm, cax=cax_norm, label='Normalised WCPDI')
-    ax_norm.set_title('Normalised WCPDI')
-
-    frames = []
-    for state, WCPDI_map in enumerate(wcpdi_maps):
-        im = ax.imshow(WCPDI_map.T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap='hot', vmin=vmin, vmax=vmax)
-        im_n = ax_norm.imshow(_norm(WCPDI_map).T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap='hot', vmin=0, vmax=1)
-        title = ax.text(0.5, 1.05, f"State {state}/{n_states - 1}",
-                        transform=ax.transAxes, ha='center', va='bottom')
-        frames.append([im, im_n, title])
-        if state == state_to_show:
-            fig_snap, (ax_s, ax_sn) = plt.subplots(1, 2, figsize=(12, 8))
-            _draw_static_panel(ax_s, panel_number)
-            _draw_static_panel(ax_sn, panel_number)
-            im_s = ax_s.imshow(WCPDI_map.T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap='hot', vmin=vmin, vmax=vmax)
-            fig_snap.colorbar(im_s, cax=make_axes_locatable(ax_s).append_axes("right", size="5%", pad=0.05), label='WCPDI Value')
-            ax_s.set_title(f'WCPDI — State {state}')
-            im_sn = ax_sn.imshow(_norm(WCPDI_map).T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap='hot', vmin=0, vmax=1)
-            fig_snap.colorbar(im_sn, cax=make_axes_locatable(ax_sn).append_axes("right", size="5%", pad=0.05), label='Normalised WCPDI')
-            ax_sn.set_title(f'Normalised WCPDI — State {state}')
-            for a in (ax_s, ax_sn):
-                a.set_xlabel('X Position')
-                a.set_ylabel('Y Position')
-            fig_snap.tight_layout()
-
-            if file_name is None:
-                file_name = f"WCPDI_map_state_{state}"
-            fig_snap.savefig(f"{output_dir}/{file_name}_snap.svg", format='svg', bbox_inches='tight')
-            if show_snap:   
-                plt.show()
-
-    anim = animation.ArtistAnimation(fig, frames, interval=200, blit=True)
-
-    if file_name is None:
-        file_name = f"WCPDI_panel_{panel_number}"
-    anim.save(f'{output_dir}/{file_name}_animation.gif', writer='pillow')
-'''
 
 def _safe_minmax(m):
     """nanmin/nanmax that degrade to (0.0, 1.0) instead of nan when a frame
@@ -275,7 +195,7 @@ def _safe_minmax(m):
     return np.nanmin(m), np.nanmax(m)
 
 
-def animate_panel_sidebyside(panel_number, model, n_pixels, c, beta=None, features=False, transform=None, output_dir="animations", file_name=None, faults_data=None):
+def animate_panel_sidebyside(panel_number, model, n_pixels, c, beta=None, features=False, transform=None, output_dir=str(ANIMATIONS_DIR), file_name=None, faults_data=None):
     """Two-panel animation.
 
     Left:  globally normalised WCPDI (0-1 scale fixed across all states).
@@ -287,9 +207,9 @@ def animate_panel_sidebyside(panel_number, model, n_pixels, c, beta=None, featur
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     if features:
-        dataset = features_GraphDataset(root='graph_data', panel_number=panel_number, freq=3)
+        dataset = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=panel_number, freq=DEFAULT_FREQ_INDEX)
     else:
-        dataset = Panel_GraphDataset(root='graph_data', panel_number=panel_number, freq=3, big_latent=True)
+        dataset = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=panel_number, freq=DEFAULT_FREQ_INDEX, big_latent=True)
     if transform is not None:
         dataset.transform = transform
     n_states = len(dataset)
@@ -334,7 +254,7 @@ def animate_panel_sidebyside(panel_number, model, n_pixels, c, beta=None, featur
     divider_norm = make_axes_locatable(ax_norm)
     cax_norm = divider_norm.append_axes("right", size="5%", pad=0.05)
     im_norm = ax_norm.imshow(_norm(wcpdi_maps[0]).T, extent=(0, PANEL_W, 0, PANEL_H),
-                             origin='lower', cmap='hot', vmin=0, vmax=1)
+                             origin='lower', cmap=CMAP_HEATMAP, vmin=0, vmax=1)
     cbar_norm = fig.colorbar(im_norm, cax=cax_norm, label='Normalised WCPDI')
     ax_norm.set_title('Normalised WCPDI')
     ax_norm.set_xlabel('X Position')
@@ -347,7 +267,7 @@ def animate_panel_sidebyside(panel_number, model, n_pixels, c, beta=None, featur
     divider_adapt = make_axes_locatable(ax_adapt)
     cax_adapt = divider_adapt.append_axes("right", size="5%", pad=0.05)
     im_adapt = ax_adapt.imshow(m0.T, extent=(0, PANEL_W, 0, PANEL_H),
-                               origin='lower', cmap='hot', vmin=fmin0, vmax=fmax0)
+                               origin='lower', cmap=CMAP_HEATMAP, vmin=fmin0, vmax=fmax0)
     cbar_adapt = fig.colorbar(im_adapt, cax=cax_adapt, label='WCPDI Value')
     ax_adapt.set_title('Adaptive-scale WCPDI')
     ax_adapt.set_xlabel('X Position')
@@ -401,15 +321,15 @@ def optimal_beta(d, max_d):
             
 if __name__ == "__main__":
     features=True
-    f = 3
+    f = DEFAULT_FREQ_INDEX
     if features:
-        dir = r"GCN_models\gcn_features_lin.pt"
+        dir = str(GCN_MODELS_DIR / "gcn_features_lin.pt")
 
-        dataset_103 = features_GraphDataset(root='graph_data', panel_number=103, freq=f)
-        dataset_104 = features_GraphDataset(root='graph_data', panel_number=104, freq=f)
-        dataset_105 = features_GraphDataset(root='graph_data', panel_number=105, freq=f)
-        dataset_109 = features_GraphDataset(root='graph_data', panel_number=109, freq=f)
-        dataset_123 = features_GraphDataset(root='graph_data', panel_number=123, freq=f)
+        dataset_103 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=103, freq=f)
+        dataset_104 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=104, freq=f)
+        dataset_105 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=105, freq=f)
+        dataset_109 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=109, freq=f)
+        dataset_123 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=123, freq=f)
         bundle = torch.load(dir, weights_only=False)
         if isinstance(bundle, dict):
             model = bundle['model']
@@ -424,12 +344,12 @@ if __name__ == "__main__":
             model = bundle
             norm_transform = None
     else:
-        dir = r"GCN_models\gcn_big_latent.pt"
+        dir = str(GCN_MODELS_DIR / "gcn_big_latent.pt")
     
         model = torch.load(dir, weights_only=False)
-        dataset_109 = Panel_GraphDataset(root='graph_data', panel_number=109, freq=f, big_latent=True)
-        dataset_104 = Panel_GraphDataset(root='graph_data', panel_number=104, freq=f, big_latent=True)
-        dataset_123 = Panel_GraphDataset(root='graph_data', panel_number=123, freq=f, big_latent=True)
+        dataset_109 = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=109, freq=f, big_latent=True)
+        dataset_104 = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=104, freq=f, big_latent=True)
+        dataset_123 = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=123, freq=f, big_latent=True)
 
     sHi = extract_sHI_after_GAN(model, dataset_109, state=0, path_index=0)
     print(f"Extracted sHI: {sHi}")
@@ -448,7 +368,7 @@ if __name__ == "__main__":
     P(P_values, grid, state=0, dataset=dataset_109, model=model)  
 
     plt.figure(figsize=(6,8))
-    plt.imshow(P_values.T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap='hot')
+    plt.imshow(P_values.T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap=CMAP_HEATMAP)
     plt.colorbar(label='Damage Probability')
     plt.title('Damage Probability Map')
     plt.xlabel('X Position')
@@ -460,17 +380,17 @@ if __name__ == "__main__":
     U(U_values, grid, panel_number=dataset_109.panel_number, state=0)
 
     plt.figure(figsize=(6, 8))
-    plt.imshow(U_values.T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap='hot')
+    plt.imshow(U_values.T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap=CMAP_HEATMAP)
     plt.colorbar(label='Weight Sum')
     plt.title('Weight Map')
     plt.xlabel('X Position')
     plt.ylabel('Y Position')
     plt.tight_layout()
     
-    WCPDI_map = WCPDI(P_values, U_values, c=0.9, grid=grid)
+    WCPDI_map = WCPDI(P_values, U_values, c=DEFAULT_WCPDI_C, grid=grid)
 
     plt.figure(figsize=(6, 8))
-    plt.imshow(WCPDI_map.T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap='hot')
+    plt.imshow(WCPDI_map.T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap=CMAP_HEATMAP)
     plt.colorbar(label='WCPDI Value')
     plt.title('WCPDI Map')
     plt.xlabel('X Position')
@@ -480,4 +400,4 @@ if __name__ == "__main__":
    
     plt.show()
 
-    animate_panel(panel_number=103, model=model, n_pixels=10000, c=0.9, beta=beta, state_to_show=0, features=features, transform=norm_transform if features else None)
+    animate_panel_sidebyside(panel_number=103, model=model, n_pixels=DEFAULT_N_PIXELS, c=DEFAULT_WCPDI_C, beta=beta, state_to_show=0, features=features, transform=norm_transform if features else None)

@@ -1,4 +1,15 @@
 
+import sys
+from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+for _sub in ("data", "models", "algorithms", "training", "viz", "scripts"):
+    _p = str(_PROJECT_ROOT / _sub)
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -9,6 +20,10 @@ from plot_panel import SENSOR_PAIRS
 from weight_matrix import failed_sensor_at
 from graph_dataset import features_GraphDataset
 import torch_geometric
+from config import (
+    GRAPH_DATA_DIR, CROSS_VALIDATION_RESULTS_DIR, DEFAULT_FREQ_INDEX,
+    DEFAULT_WCPDI_C, DEFAULT_WCPDI_BETA, DEFAULT_N_PIXELS,
+)
 
 
 def plot_sHI_for_every_path(model, panel_number, title="sHI vs State for every path", save_path=None, cmap="nipy_spectral", sensor=None):
@@ -19,7 +34,7 @@ def plot_sHI_for_every_path(model, panel_number, title="sHI vs State for every p
     """
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    dataset = features_GraphDataset(root='graph_data', panel_number=panel_number, freq=3)
+    dataset = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=panel_number, freq=DEFAULT_FREQ_INDEX)
     num_states = len(dataset)
     num_paths = len(SENSOR_PAIRS)
 
@@ -78,9 +93,9 @@ def plot_sHI_for_every_path(model, panel_number, title="sHI vs State for every p
     plt.show()
 
 
-features = True  
-#output_dir = r"C:\Users\Maria\Documents\Honours Programme\Networks\GAN\Cross_Validation_Results\2026-07-04-19-40-54"
-output_dir = r"C:\Users\Maria\Documents\Honours Programme\GAN\Cross_Validation_Results\2026-07-02-22-41-29"
+features = True
+#output_dir = str(CROSS_VALIDATION_RESULTS_DIR / "2026-07-04-19-40-54")
+output_dir = str(CROSS_VALIDATION_RESULTS_DIR / "2026-07-02-22-41-29")
 ensemble_model_path = os.path.join(output_dir, "ensemble_model.pt")
 #build_and_save_ensemble(output_dir, ensemble_model_path)
 
@@ -91,8 +106,8 @@ plot_sHI_for_every_path(ensemble_model, 104, sensor=8)
 plot_sHI_for_every_path(ensemble_model, 105, sensor=8)
 plot_sHI_for_every_path(ensemble_model, 109)
 plot_sHI_for_every_path(ensemble_model, 123, sensor=3)
-animate_panel_sidebyside(panel_number=103, model=ensemble_model, n_pixels=10000, c=0.9, beta=0.5, features=features, transform=None, output_dir=output_dir, file_name="WCPDI_panel_103_dp")
-animate_panel_sidebyside(panel_number=104, model=ensemble_model, n_pixels=10000, c=0.9, beta=0.5, features=features, transform=None, output_dir=output_dir, file_name="WCPDI_panel_104_dp")
-animate_panel_sidebyside(panel_number=105, model=ensemble_model, n_pixels=10000, c=0.9, beta=0.5, features=features, transform=None, output_dir=output_dir, file_name="WCPDI_panel_105_dp")
-animate_panel_sidebyside(panel_number=109, model=ensemble_model, n_pixels=10000, c=0.9, beta=0.5, features=features, transform=None, output_dir=output_dir, file_name="WCPDI_panel_109_dp")
-animate_panel_sidebyside(panel_number=123, model=ensemble_model, n_pixels=10000, c=0.9, beta=0.5, features=features, transform=None, output_dir=output_dir, file_name="WCPDI_panel_123_dp")
+animate_panel_sidebyside(panel_number=103, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, c=DEFAULT_WCPDI_C, beta=DEFAULT_WCPDI_BETA, features=features, transform=None, output_dir=output_dir, file_name="WCPDI_panel_103_dp")
+animate_panel_sidebyside(panel_number=104, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, c=DEFAULT_WCPDI_C, beta=DEFAULT_WCPDI_BETA, features=features, transform=None, output_dir=output_dir, file_name="WCPDI_panel_104_dp")
+animate_panel_sidebyside(panel_number=105, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, c=DEFAULT_WCPDI_C, beta=DEFAULT_WCPDI_BETA, features=features, transform=None, output_dir=output_dir, file_name="WCPDI_panel_105_dp")
+animate_panel_sidebyside(panel_number=109, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, c=DEFAULT_WCPDI_C, beta=DEFAULT_WCPDI_BETA, features=features, transform=None, output_dir=output_dir, file_name="WCPDI_panel_109_dp")
+animate_panel_sidebyside(panel_number=123, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, c=DEFAULT_WCPDI_C, beta=DEFAULT_WCPDI_BETA, features=features, transform=None, output_dir=output_dir, file_name="WCPDI_panel_123_dp")

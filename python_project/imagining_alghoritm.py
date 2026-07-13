@@ -128,9 +128,14 @@ def WCPDI(P, U, c, grid):
     THR = find_threshold(U, c, grid)
     peak_U = U.max()
     thr_val = THR * peak_U
-    mask = P > thr_val
-    #WCPDI_map = np.where(mask, (P - thr_val) / (U / peak_U), 0.0)
-    WCPDI_map = (P - thr_val) / (U / peak_U)
+
+    # Pixels with no surviving sensor-path coverage (U == 0, e.g. near a
+    # failed sensor once its paths are excluded) have no defined WCPDI value
+    # -- mark them nan explicitly instead of leaving it to an incidental 0/0.
+    valid = U > 0
+    WCPDI_map = np.full_like(P, np.nan)
+    with np.errstate(invalid='ignore', divide='ignore'):
+        WCPDI_map[valid] = (P[valid] - thr_val) / (U[valid] / peak_U)
     return WCPDI_map
 
 def extract_sHI_after_GAN(model, dataset, state, path_index, extract_HI=False):
@@ -169,7 +174,7 @@ def plot_HI(model, dataset, title="HI vs State Index", save_path=None):
     plt.show()
 
 
-
+'''
 def animate_panel(panel_number, model, n_pixels, c, beta=None, state_to_show=None, features=False, transform=None, show_snap=False, output_dir="animations", file_name=None):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -259,6 +264,15 @@ def animate_panel(panel_number, model, n_pixels, c, beta=None, state_to_show=Non
     if file_name is None:
         file_name = f"WCPDI_panel_{panel_number}"
     anim.save(f'{output_dir}/{file_name}_animation.gif', writer='pillow')
+'''
+
+def _safe_minmax(m):
+    """nanmin/nanmax that degrade to (0.0, 1.0) instead of nan when a frame
+    has no valid (non-blind) pixels left, e.g. once enough sensors have
+    failed that a state's WCPDI map is all-nan."""
+    if np.all(np.isnan(m)):
+        return 0.0, 1.0
+    return np.nanmin(m), np.nanmax(m)
 
 
 def animate_panel_sidebyside(panel_number, model, n_pixels, c, beta=None, features=False, transform=None, output_dir="animations", file_name=None, faults_data=None):
@@ -302,10 +316,12 @@ def animate_panel_sidebyside(panel_number, model, n_pixels, c, beta=None, featur
     ix = int(np.clip(round(damage_point[0] / dx), 0, X.shape[0] - 1))
     iy = int(np.clip(round(damage_point[1] / dx), 0, X.shape[1] - 1))
     damage_vals = np.array([m[ix, iy] for m in wcpdi_maps])
-    mean_vals = np.array([m.mean() for m in wcpdi_maps])
+    mean_vals = np.array([
+        np.nanmean(m) if not np.all(np.isnan(m)) else np.nan
+        for m in wcpdi_maps
+    ])
 
-    vmin_global = min(m.min() for m in wcpdi_maps)
-    vmax_global = max(m.max() for m in wcpdi_maps)
+    vmin_global, vmax_global = _safe_minmax(np.stack(wcpdi_maps))
     span_global = (vmax_global - vmin_global) or 1.0
 
     def _norm(m):
@@ -325,7 +341,7 @@ def animate_panel_sidebyside(panel_number, model, n_pixels, c, beta=None, featur
     ax_norm.set_ylabel('Y Position')
 
     m0 = wcpdi_maps[0]
-    fmin0, fmax0 = m0.min(), m0.max()
+    fmin0, fmax0 = _safe_minmax(m0)
     if fmax0 == fmin0:
         fmax0 = fmin0 + 1.0
     divider_adapt = make_axes_locatable(ax_adapt)
@@ -357,7 +373,7 @@ def animate_panel_sidebyside(panel_number, model, n_pixels, c, beta=None, featur
         m = wcpdi_maps[state]
         im_norm.set_data(_norm(m).T)
 
-        fmin, fmax = m.min(), m.max()
+        fmin, fmax = _safe_minmax(m)
         if fmax == fmin:
             fmax = fmin + 1.0
         im_adapt.set_data(m.T)

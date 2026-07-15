@@ -24,6 +24,7 @@ slprj/
 
 # Databese files
 *.csv
+*.xlsx
 *.json
 
 # Output directories

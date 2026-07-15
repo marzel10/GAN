@@ -127,7 +127,7 @@ DEFAULT_N_PIXELS = 10000   # Repeated as a bare literal in: GCN_train.py, make_a
 # Model hyperparameter defaults
 # ===========================================================================
 DEFAULT_K_SPARSE = 10          # Repeated independently 11x across fc_AE.py and big_train.py
-DEFAULT_N_FEATURES = 33        # Duplicated as N_FEAT in big_train.py and the n_feat default in fc_AE.py
+DEFAULT_N_FEATURES = 66        # Duplicated as N_FEAT in big_train.py and the n_feat default in fc_AE.py
 K_SPARSE_PENALTY_WEIGHT = 0.1  # Owned by: BO.py
 
 # ===========================================================================

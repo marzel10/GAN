@@ -26,7 +26,7 @@ import matplotlib.pyplot as plt
 
 from config import (
     BASE_PANELS, PANEL_123_SUBPANELS, VAL_123_SUBPANELS, TEST_123_SUBPANELS,
-    mat_file_path, DEFAULT_FREQ_INDEX,
+    mat_file_path, DEFAULT_FREQ_INDEX, FEATURES_CACHE_DIR,
 )
 
 
@@ -115,7 +115,7 @@ def prepare_simple_dataset(path_i, freq_i, panel_name,batch_size=1,include_bench
         if features:
             f_idx = np.where(np.array(ds_names) == "123_1")[0]
             for f in features_list[f_idx[0]:f_idx[0]+8]:
-                feat = f.extract_all_features(":", freq_i, path_i, sample_rate=sampling_rate)
+                feat = f.extract_all_features(":", freq_i, path_i, sample_rate=sampling_rate, cache_dir=str(FEATURES_CACHE_DIR))
                 if 'full_feat' not in locals():
                     full_feat = feat
                 else:
@@ -147,7 +147,7 @@ def prepare_simple_dataset(path_i, freq_i, panel_name,batch_size=1,include_bench
         if features:
             f_idx = np.where(np.array(ds_names) == panel_name)[0]
             f = features_list[f_idx[0]]
-            feat = f.extract_all_features(":", freq_i, path_i, sample_rate=sampling_rate)
+            feat = f.extract_all_features(":", freq_i, path_i, sample_rate=sampling_rate, cache_dir=str(FEATURES_CACHE_DIR))
             ds, _ = make_ds_features(feat, feat.shape[0], batch_size=batch_size)
             return ds
         else:
@@ -174,9 +174,9 @@ def prepare_datastores(path_i, freq_i, base_batch_size, test_batch_size, train_d
 
     if features:
         for f in features_list:
-            feat = f.extract_all_features(":", freq_i, path_i, sample_rate=sampling_rate, benchmark=False)
+            feat = f.extract_all_features(":", freq_i, path_i, sample_rate=sampling_rate, benchmark=False, cache_dir=str(FEATURES_CACHE_DIR))
             if include_benchmark:
-                feat_bench = f.extract_all_features(":", freq_i, path_i, sample_rate=sampling_rate, benchmark=True)
+                feat_bench = f.extract_all_features(":", freq_i, path_i, sample_rate=sampling_rate, benchmark=True, cache_dir=str(FEATURES_CACHE_DIR))
                 if diff_bench:
                     # The feature is the difference between the signal and benchmark features
                     feat = feat - feat_bench

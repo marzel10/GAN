@@ -323,7 +323,7 @@ def model_train_features(
         np.random.seed(seed)
         tf.random.set_seed(seed)
 
-    N_FEAT     = 33
+    N_FEAT     = DEFAULT_N_FEATURES
     n_channels = 2 if (include_benchmark and net_type == 'CNN_AE') else 1
     flat_size  = N_FEAT * n_channels          # 33 or 66
 
@@ -344,7 +344,7 @@ def model_train_features(
 
     elif net_type == 'CNN_AE':
         default_params = {"k_sparse": DEFAULT_K_SPARSE, "n_features": N_FEAT, "n_channels": n_channels,
-                          "filters": 16, "latent_dim": 16, "drop_rate":0.2, "kernel_size": 15}
+                          "filters_bench": 16, "filters_path": 16, "latent_dim": 16, "drop_rate":0.2}
         if params is None:
             params = default_params
         else:
@@ -438,7 +438,8 @@ def model_train_features(
         "learning_rate": Vlearning_rate,
         "k_sparse": params.get("k_sparse", "N/A"),
         "trainable_params": trainable_count,
-        "filters": params.get("filters", "N/A"),
+        "filters_bench": params.get("filters_bench", "N/A"),
+        "filters_path": params.get("filters_path", "N/A"),
         "latent_dim": params.get("latent_dim", "N/A"),
         "drop_rate": params.get("drop_rate", "N/A"),
         "kernel_size": params.get("kernel_size", "N/A"),
@@ -482,8 +483,8 @@ if __name__ == "__main__":
     net_type = 'CNN_AE'  # Options: 'fc_AE', 'CNN_AE'
     basic_panels = BASE_PANELS  # panels used for cross-validation (each held out once)
     features = True
-    benchmark = False
-    enable_diff = "True" # Only relevant for CNN_AE; if True, the model will be trained on the difference between signal and benchmark features
+    benchmark = True
+    enable_diff = False # Only relevant for CNN_AE; if True, the model will be trained on the difference between signal and benchmark features
     state_idx_for_recon = 0  # example state shown in the per-fold reconstruction plots
     path_indexes = [0]  # path indexes to iterate over; adjust as needed
 
@@ -517,8 +518,8 @@ if __name__ == "__main__":
             if features:
                 params = {
                     "k_sparse": DEFAULT_K_SPARSE,
-                    "k_sparse": DEFAULT_K_SPARSE, "n_features": 33, "n_channels": 2 if (benchmark ) else 1,
-                          "filters": 16, "latent_dim": 16, "drop_rate":0.2, "kernel_size": 15
+                    "k_sparse": DEFAULT_K_SPARSE, "n_features": DEFAULT_N_FEATURES, "n_channels": 2 if (benchmark ) else 1,
+                          "filters_bench": 10, "filters_path": 10, "latent_dim": 16, "drop_rate":0.2
                     # input_size is overridden by model_train_features to match the datastore shape
                 }
                 (model, history, final_loss, rec_loss_at_final, lat_loss_at_final,

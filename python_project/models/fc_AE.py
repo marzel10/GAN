@@ -347,12 +347,12 @@ def build_CNN_AE_features(params):
 	'''
 	n_feat     = params.get("n_features", DEFAULT_N_FEATURES)
 	n_channels = params.get("n_channels", 1)   # 1 without benchmark, 2 with
-	filters    = params.get("filters", 16)
+	filters_bench    = params.get("filters_bench", 16)
+	filters_path = params.get("filters_path", 16)
 	latent_dim = params.get("latent_dim", 16)
 	k_sparse   = params.get("k_sparse", DEFAULT_K_SPARSE)
 	drop_rate  = params.get("drop_rate", 0.0)
-	kernel_size = params.get("kernel_size", n_feat)  # [height, width] of the conv kernel
-	conv_out_h = n_feat - kernel_size + 1  # encoder Conv2D output height (padding="valid")
+	conv_out_h = n_feat//2  # encoder Conv2D output height (padding="valid")
 
 	he     = tf.keras.initializers.HeNormal()
 	narrow = tf.keras.initializers.TruncatedNormal(stddev=0.05)
@@ -363,19 +363,26 @@ def build_CNN_AE_features(params):
 	# ── Encoder ──────────────────────────────────────────────────────────
 	# Add channel dim so Conv2D sees (n_feat, n_channels, 1)
 	x = ExpandLastDim(name="expand")(inp)
-	x = tf.keras.layers.Conv2D(filters, kernel_size=[kernel_size, n_channels], padding="valid",
-	                           activation=None, kernel_initializer=he,
-	                           kernel_regularizer=reg, name="enc_conv")(x)
-	# shape: (batch, n_feat, 1, filters)
-	x = tf.keras.layers.BatchNormalization(name="enc_bn")(x)
-	x = tf.keras.layers.Activation("elu", name="enc_act")(x)
-	x = tf.keras.layers.Dropout(drop_rate, name="enc_drop")(x)
 
-	x = tf.keras.layers.Flatten(name="flatten")(x)               # (batch, n_feat*filters)
+	x = tf.keras.layers.Conv2D(filters_bench, kernel_size=[1, n_channels], padding="valid", strides=[1, n_channels],
+	                           activation=None, kernel_initializer=he,
+	                           kernel_regularizer=reg, name="bench_comp")(x)
+	cx = tf.keras.layers.BatchNormalization(name="bench_bn")(x)
+	cx = tf.keras.layers.Activation("elu", name="bench_act")(cx)
+
+
+	x = tf.keras.layers.Conv2D(filters_path, kernel_size=[2, 1], padding="valid", strides=[2, 1],
+	                           activation=None, kernel_initializer=he,
+	                           kernel_regularizer=reg, name="dir_comp")(cx)
+	cx = tf.keras.layers.BatchNormalization(name="dir_bn")(x)
+	cx = tf.keras.layers.Activation("elu", name="dir_act")(cx)
+
+	x = tf.keras.layers.Flatten(name="flatten")(cx)               # (batch, n_feat*filters)
 	x = tf.keras.layers.Dense(latent_dim, kernel_initializer=he,
 	                          kernel_regularizer=reg, name="enc_dense")(x)
 	x = tf.keras.layers.BatchNormalization(name="lat_bn")(x)
 	x = tf.keras.layers.Activation("elu", name="lat_act")(x)
+	x = tf.keras.layers.Dropout(drop_rate, name="lat_dropout")(x)
 	z = KSparse(k_sparse, name="latent_space")(x)                # (batch, latent_dim)
 
 	# ── sHI head ─────────────────────────────────────────────────────────
@@ -388,14 +395,23 @@ def build_CNN_AE_features(params):
 	# same kernel_size inverts that Conv2D in one step -- valid-mode transpose conv
 	# output = input + kernel - 1, so height conv_out_h+kernel_size-1 == n_feat and
 	# width 1+n_channels-1 == n_channels, for any kernel_size/n_channels.
-	x = tf.keras.layers.Dense(conv_out_h * filters, kernel_initializer=he,
+	x = tf.keras.layers.Dense(conv_out_h * filters_path, kernel_initializer=he,
 	                          kernel_regularizer=reg, name="dec_dense")(z)
 	x = tf.keras.layers.BatchNormalization(name="dec_bn")(x)
 	x = tf.keras.layers.Activation("elu", name="dec_act")(x)
-	x = tf.keras.layers.Reshape((conv_out_h, 1, filters), name="reshape")(x)
-	x = tf.keras.layers.Conv2DTranspose(1, kernel_size=[kernel_size, n_channels], padding="valid",
+	x = tf.keras.layers.Dropout(drop_rate, name="dec_dropout")(x)
+	x = tf.keras.layers.Reshape((conv_out_h, 1, filters_path), name="reshape")(x)
+
+	x = tf.keras.layers.Conv2DTranspose(filters_path, kernel_size=[2, 1], strides=[2, 1], padding="valid",
 	                                    activation=None, kernel_initializer=he,
 	                                    kernel_regularizer=reg, name="dec_conv")(x)
+	x = tf.keras.layers.BatchNormalization(name="dec_bn2")(x)
+	x = tf.keras.layers.Activation("elu", name="dec_act2")(x)
+
+	x = tf.keras.layers.Conv2DTranspose(1, kernel_size=[1, n_channels], padding="valid",
+	                                    activation=None, kernel_initializer=he,
+	                                    kernel_regularizer=reg, name="dec_conv2")(x)
+
 	# shape: (batch, n_feat, n_channels, 1) → squeeze last dim
 	rec = SqueezeLastDim(name="reconstruction")(x)
 
@@ -408,9 +424,9 @@ if __name__ == "__main__":
 	params = params = {
             "drop_rate": 0.1,
             "k_sparse": DEFAULT_K_SPARSE,
-            "filter1": 10,
-            "filter2": 8,
-            "filter3": 6,
+            "filters_bench": 10,
+            "filters_path": 10,
+            "kernel_size": 5,
             "filter4": 4,
             "kernel_size1": 20,
             "kernel_size2": 10,

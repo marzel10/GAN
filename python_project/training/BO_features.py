@@ -8,10 +8,10 @@ Configure MODE / MODEL_TYPE / MAX_TRIALS at the bottom of the file:
     MODE = "duo"     -> optimize both fc_AE and CNN_AE, plot side-by-side
 
 Hyperparameters for FC_AE:
-    - latent_dim, k_sparse (bounded by latent_dim), drop_rate, l2_reg, batch_size
+    - latent_dim, k_sparse (bounded by latent_dim), drop_rate, batch_size
 
 Hyperparameters for CNN_AE:
-    - latent_dim, k_sparse (bounded by latent_dim), drop_rate, l2_reg, filters, kernel_size, batch_size
+    - latent_dim, k_sparse (bounded by latent_dim), drop_rate, filters_bench, filters_path, batch_size
 
 Hardcoded constants:
     - K_SPARSE_PENALTY_WEIGHT: weight for the k-sparse penalty added to the loss (diagnostic only, see below)
@@ -83,17 +83,18 @@ from config import (
 # ─── Constants ────────────────────────────────────────────────────────────────
 
 # HP columns reported in sensitivity / coverage plots, per model type.
-# These names match build_fc_AE_features / build_CNN_AE_features's own params exactly
-# (unlike the raw-signal architectures, these builders take singular "filters" /
-# "kernel_size" -- there's only ever one conv layer, no per-block indexing).
+# These names match build_fc_AE_features / build_CNN_AE_features's own params exactly.
+# CNN_AE_features's two-stage encoder (bench_comp mixes channels, dir_comp pairs each
+# stat's half1/half2 values) has its own filters_bench/filters_path, not a single
+# "filters"/"kernel_size" pair.
 HP_COLS = {
     # Fully connected AE has the following HP
     "fc_AE": [
-         "k_sparse_frac", "batch_size", "latent_dim", "drop_rate", "l2_reg"
+         "k_sparse_frac", "batch_size", "latent_dim", "drop_rate"
     ],
     # CNN AE has the following HP
     "CNN_AE": [
-        "k_sparse_frac", "filters", "latent_dim", "drop_rate", "kernel_size", "batch_size", "l2_reg"
+        "k_sparse_frac", "filters_bench", "filters_path", "latent_dim", "drop_rate", "batch_size"
     ],
 }
 
@@ -141,10 +142,6 @@ def get_drop_rate_hp(hp):
     return hp.Float("drop_rate", 0.0, 0.5, step=0.1)
 
 
-def get_l2_reg_hp(hp):
-    return hp.Float("l2_reg", min_value=1e-5, max_value=1e-2, sampling="log")
-
-
 def get_batch_size_hp(hp):
     return hp.Int("batch_size", min_value=4, max_value=32, step=4)
 
@@ -175,7 +172,6 @@ def build_model(hp, model_type="fc_AE"):
     latent_dim = get_latent_dim_hp(hp)
     k_sparse = resolve_k_sparse(get_k_sparse_frac_hp(hp), latent_dim)
     drop_rate = get_drop_rate_hp(hp)
-    l2_reg = get_l2_reg_hp(hp)
 
     if model_type == "fc_AE":
         params = {
@@ -184,7 +180,6 @@ def build_model(hp, model_type="fc_AE"):
             "latent_dim": latent_dim,
             "k_sparse": k_sparse,
             "drop_rate": drop_rate,
-            "l2_reg": l2_reg,
         }
         model = build_fc_AE_features(params)
     elif model_type == "CNN_AE":
@@ -197,11 +192,8 @@ def build_model(hp, model_type="fc_AE"):
             "latent_dim": latent_dim,
             "k_sparse": k_sparse,
             "drop_rate": drop_rate,
-            "l2_reg": l2_reg,
-            "filters": hp.Int("filters", min_value=8, max_value=64, step=8),
-            # Bounded to N_FEAT so the encoder Conv2D's "valid" padding never collapses
-            # conv_out_h = n_feat - kernel_size + 1 below 1.
-            "kernel_size": hp.Int("kernel_size", min_value=5, max_value=N_FEAT, step=2),
+            "filters_bench": hp.Int("filters_bench", min_value=2, max_value=8, step=2),
+            "filters_path": hp.Int("filters_path", min_value=2, max_value=12, step=2),
         }
         model = build_CNN_AE_features(params)
     else:
@@ -508,11 +500,10 @@ def run_bayesian_optimization(path_i, freq, model_type="fc_AE", max_trials=30, o
         "latent_dim": best_params["latent_dim"],
         "k_sparse": resolve_k_sparse(best_params["k_sparse_frac"], best_params["latent_dim"]),
         "drop_rate": best_params["drop_rate"],
-        "l2_reg": best_params["l2_reg"],
     }
     if model_type == "CNN_AE":
-        final_params["filters"] = best_params["filters"]
-        final_params["kernel_size"] = best_params["kernel_size"]
+        final_params["filters_bench"] = best_params["filters_bench"]
+        final_params["filters_path"] = best_params["filters_path"]
         final_params["n_channels"] = 2  # matches MyTuner.benchmark / build_model above
 
     rec_train_loss_list, lat_train_loss_list = [], []
@@ -722,7 +713,7 @@ def plot_all(results):
 # ─── Entry point ──────────────────────────────────────────────────────────────
 # Configure the run here:
 MODE = "single"            # "single" or "duo"
-MODEL_TYPE = "fc_AE"    # used only when MODE == "single"  ("fc_AE" or "CNN_AE")
+MODEL_TYPE = "CNN_AE"    # used only when MODE == "single"  ("fc_AE" or "CNN_AE")
 MAX_TRIALS = 30
 PATH_I = 0
 FREQ_I = 3
@@ -733,9 +724,9 @@ def main():
     plt.close("all")
     tf.keras.backend.clear_session()
 
-    folder_name = f"Multi_path_BO"
+    folder_name = f"Multi_path_BO_fixed"
     
-    for PATH_I in range(4,28):
+    for PATH_I in range(3,28):
         out_dir = f"{folder_name}/Bayesian_{MODEL_TYPE}_path{PATH_I}"
         if MODE == "single":
             results = [run_bayesian_optimization(PATH_I, FREQ_I, MODEL_TYPE, max_trials=MAX_TRIALS, out_dir=out_dir, db_dir=folder_name)]

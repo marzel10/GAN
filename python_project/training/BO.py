@@ -530,7 +530,7 @@ def run_predictions(result, path_i, freq_i, state_idx=0,):
     train_names = TRAIN_DS_NAMES 
     val_names = VAL_DS_NAMES
 
-    _, _, _, ds_dict, target_dict, RUL_dict, States_dict = prepare_datastores(
+    _, _, _, ds_dict, target_dict, RUL_dict, States_dict, _ = prepare_datastores(
         path_i=path_i,
         freq_i=freq_i,
         base_batch_size=result["best_params"].get("batch_size"),

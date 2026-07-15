@@ -270,6 +270,7 @@ def prepare_datastores(path_i, freq_i, base_batch_size, test_batch_size, train_d
             test_dataset = test_dataset.concatenate(ds_dict[name])
 
     #if features are enabled, normalize them across the entire training set (fit scaler on train, apply to val/test)
+    norm_stats = None
     if features:
         # Collect all training batches then compute stats with numpy — avoids the
         # catastrophic cancellation in the one-pass formula sqrt(E[X²] - E[X]²)
@@ -297,9 +298,12 @@ def prepare_datastores(path_i, freq_i, base_batch_size, test_batch_size, train_d
         test_dataset  = test_dataset.map(normalize)
         for name in ds_dict:
             ds_dict[name] = ds_dict[name].map(normalize)
-        
 
-    return train_dataset, val_dataset, test_dataset, ds_dict, target_dict, RUL_dict, States_dict
+        # Stored so callers (e.g. cross-validation ensembling) can reproduce the exact
+        # normalization this fold's model was trained on, and invert it back to raw units.
+        norm_stats = {"feature_means": feature_means, "feature_stds": feature_stds}
+
+    return train_dataset, val_dataset, test_dataset, ds_dict, target_dict, RUL_dict, States_dict, norm_stats
 
 
 
@@ -320,7 +324,7 @@ if __name__ == "__main__":
     features = True
 
 
-    train_dataset, val_dataset, test_dataset, ds_dict, target_dict, RUL_dict, States_dict = prepare_datastores(
+    train_dataset, val_dataset, test_dataset, ds_dict, target_dict, RUL_dict, States_dict, norm_stats = prepare_datastores(
         path_i,
         freq,
         base_batch_size,

@@ -30,11 +30,13 @@ GCN_MODELS_DIR = PROJECT_ROOT / "GCN_models"                              # Writ
 MODELS_FEATURES_DIR = PROJECT_ROOT / "models_features"                   # Written by: big_train.py (model_train_features, per-path .h5 checkpoints). Read by: heatmap_AE.py
 ANIMATIONS_DIR = PROJECT_ROOT / "animations"                              # Default output_dir in imagining_alghoritm.py (animate_panel / animate_panel_sidebyside). NOTE: dead default -- every current caller overrides output_dir explicitly
 CROSS_VALIDATION_RESULTS_DIR = PROJECT_ROOT / "Cross_Validation_Results"  # Written by: GCN_train.py (__main__ cross-validation block). Read by: make_animations.py
+CROSS_VALIDATION_RESULTS_AE_DIR = PROJECT_ROOT / "Cross_Validation_Results_AE"  # Written by: big_train.py (__main__ cross-validation block)
 MODEL_TRAIN_RESULTS_DIR = PROJECT_ROOT / "model_train_results"            # Written by: big_train.py (model_train, model_train_features)
 BO_RESULTS_DIR = PROJECT_ROOT / "BO_results"                              # Written by: BO.py (_append_to_model_database default results_dir)
 BO_TUNER_DIR = PROJECT_ROOT / "tuner_dir"                                 # keras-tuner scratch dir. Written by: BO.py (MyTuner directory=)
 BO_SEARCH_RESULTS_DIR = PROJECT_ROOT / "results"                         # Written by: BO.py (run_bayesian_optimization default out_dir)
 MODEL_DATABASE_XLSX = PROJECT_ROOT / "model_database.xlsx"                # Appended to by: big_train.py, BO.py (_append_to_model_database)
+MODEL_DATABASE_XLSX_FEATURES = PROJECT_ROOT / "model_database_features.xlsx"  # Appended to by: big_train.py (model_train_features)
 ARCHIVE_DIR = PROJECT_ROOT / "archive"                                    # Historical experiment runs (Model_for_every_path/, results_hype_tweaked/, old model_database.xlsx backups). Not written to by any current code.
 
 

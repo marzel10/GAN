@@ -327,7 +327,7 @@ if __name__ == "__main__":
             safe_mode=False,
         )
 
-        _, _, _, ds_dict, target_dict, RUL_dict, States_dict = prepare_datastores(
+        _, _, _, ds_dict, target_dict, RUL_dict, States_dict, _ = prepare_datastores(
             path_i, frequency_i, base_batch_size, test_batch_size,
             train_ds_names, val_ds_names, test_ds_names,
             include_benchmark=cfg["include_benchmark"],

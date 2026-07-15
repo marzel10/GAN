@@ -19,9 +19,12 @@ slprj/
 *.pt
 *.mat
 *.npy
+*.keras
+
 
 # Databese files
 *.csv
+*.json
 
 # Output directories
 Model_for_every_path/

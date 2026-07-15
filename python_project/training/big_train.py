@@ -24,10 +24,13 @@ import pandas as pd
 from fc_AE import build_CNN_variable_block, build_deep_fully_connected_network, build_fc_AE_features, build_CNN_AE_features
 from states import states
 from states_check import prepare_datastores
-from results_viz import plot_sHI_vs_RUL, PlotContext
+from ae_cross_validation_helper import (
+    plot_sHI_cv_fold, plot_reconstruction_cv_fold, build_ensemble_ae, plot_ensemble_sHI,
+)
 from config import (
-    BASE_PANELS, VAL_123_SUBPANELS, TEST_123_SUBPANELS, DEFAULT_FREQ_INDEX,
+    BASE_PANELS, MODEL_DATABASE_XLSX_FEATURES, VAL_123_SUBPANELS, TEST_123_SUBPANELS, DEFAULT_FREQ_INDEX,
     DEFAULT_K_SPARSE, DEFAULT_N_FEATURES, MODEL_TRAIN_RESULTS_DIR, MODEL_DATABASE_XLSX,
+    CROSS_VALIDATION_RESULTS_AE_DIR,
 )
 
 # This file's cross-validation default holds panel 103 out (distinct from
@@ -39,7 +42,7 @@ _DEFAULT_TEST_DS_NAMES = VAL_123_SUBPANELS + TEST_123_SUBPANELS
 
 
 def monotonicity_loss(y_true, y_pred):
-    
+
     vae_seed = 42
     random.seed(vae_seed)
     tf.random.set_seed(vae_seed)
@@ -51,9 +54,9 @@ def monotonicity_loss(y_true, y_pred):
     diff = y_flat[1:] - y_flat[:-1]  # consecutive differences, shape (batch-1,)
     diff = diff +tf.ones(batch_size-1, dtype=tf.float32) *10-  0*tf.random.normal([batch_size-1], mean=0.0, stddev=1.0)  # Shift to ensure positive values for monotonic increase
     diff = tf.pow(diff, 2)  # Square the differences to penalize negative values more heavily
-   
-    length = tf.cast(tf.shape(diff)[0], tf.float32) 
-    print(length)
+
+    length = tf.cast(tf.shape(diff)[0], tf.float32)
+  
     baseline = 10**2 * length
     loss = tf.reduce_sum(diff) - baseline  # Subtract baseline to allow for some variability without penalty
     return loss
@@ -71,28 +74,28 @@ def bench_diff_mse(y_true, y_pred):
 
     return tf.reduce_mean(tf.square(diff_true - (y_pred[:,:,0] - y_pred[:,:,1])))
 def model_train(
-        net_type, 
-        params=None, 
-        learning_rate=0.001, 
-        loss_weights=None, 
-        epochs=50, 
-        base_batch_size=30, 
-        test_batch_size=1, 
-        path_i=0, 
-        frequency_i=DEFAULT_FREQ_INDEX, 
+        net_type,
+        params=None,
+        learning_rate=0.001,
+        loss_weights=None,
+        epochs=50,
+        base_batch_size=30,
+        test_batch_size=1,
+        path_i=0,
+        frequency_i=DEFAULT_FREQ_INDEX,
         n_blocks=4,
-        train_ds_names=_DEFAULT_TRAIN_DS_NAMES, 
-        val_ds_names=_DEFAULT_VAL_DS_NAMES, 
-        test_ds_names=_DEFAULT_TEST_DS_NAMES, 
+        train_ds_names=_DEFAULT_TRAIN_DS_NAMES,
+        val_ds_names=_DEFAULT_VAL_DS_NAMES,
+        test_ds_names=_DEFAULT_TEST_DS_NAMES,
         results_dir=str(MODEL_TRAIN_RESULTS_DIR / "multipath"),
         seed=None,
     ):
     '''
     This function trains a specified type of autoencoder (fully connected or CNN) on the provided datasets,
-    with options for hyperparameters, loss functions, and training configurations. 
+    with options for hyperparameters, loss functions, and training configurations.
     It saves the trained model and its training history, along with detailed information
     about the model and training process, in both an Excel database and a text file for easy reference.
-    
+
     Parameters:
     - net_type: Type of autoencoder to train ('fc_AE' or 'CNN_AE').
     - params: Dictionary of hyperparameters for the model architecture. If None, default parameters will be used.
@@ -109,7 +112,7 @@ def model_train(
     - results_dir: The directory where the trained model and training history are saved.
 
     '''
-    
+
     # Create results directory if it doesn't exist
     if not os.path.exists(results_dir):
         os.makedirs(results_dir)
@@ -139,7 +142,7 @@ def model_train(
         model = build_deep_fully_connected_network(params)
         model.summary()
     elif net_type == 'CNN_AE':
-       
+
         params = {
             "drop_rate": 0.0,
             "k_sparse": DEFAULT_K_SPARSE,
@@ -161,7 +164,7 @@ def model_train(
 
         model = build_CNN_variable_block(params)
         model.summary()
-        
+
     Vlearning_rate = learning_rate
     Voptimizer = tf.keras.optimizers.Adam(learning_rate=Vlearning_rate)
     Vepochs = epochs
@@ -178,11 +181,11 @@ def model_train(
 
     # Prepare the datasets for training, validation, and testing. The function will return the datasets along with dictionaries containing metadata about the datasets, targets, RUL values, and states.
     if net_type == 'fc_AE':
-        train_dataset, val_dataset, test_dataset, ds_dict, target_dict, RUL_dict, States_dict = prepare_datastores(path_i, frequency_i, base_batch_size, test_batch_size, train_ds_names, val_ds_names, test_ds_names) 
+        train_dataset, val_dataset, test_dataset, ds_dict, target_dict, RUL_dict, States_dict, _ = prepare_datastores(path_i, frequency_i, base_batch_size, test_batch_size, train_ds_names, val_ds_names, test_ds_names)
     else:
-        train_dataset, val_dataset, test_dataset, ds_dict, target_dict, RUL_dict, States_dict = prepare_datastores(path_i, frequency_i, base_batch_size, test_batch_size, train_ds_names, val_ds_names, test_ds_names, include_benchmark=True) 
+        train_dataset, val_dataset, test_dataset, ds_dict, target_dict, RUL_dict, States_dict, _ = prepare_datastores(path_i, frequency_i, base_batch_size, test_batch_size, train_ds_names, val_ds_names, test_ds_names, include_benchmark=True)
 
-            
+
     model.compile(
         optimizer=Voptimizer,
         loss=Vloss_fun,
@@ -209,13 +212,13 @@ def model_train(
     # Save the trained model
     data_time = pd.Timestamp.now().strftime("%d-%m-%H-%M")
     if net_type == 'fc_AE':
-        path = f"{results_dir}-{data_time}-deep_fully_connected_autoencoder{final_loss:.4f}.h5"
+        path = f"{results_dir}-{data_time}-deep_fully_connected_autoencoder{final_loss:.4f}.keras"
     else:
-        path = f"{results_dir}-{data_time}-deep_CNN_autoencoder{final_loss:.4f}.h5"
+        path = f"{results_dir}-{data_time}-deep_CNN_autoencoder{final_loss:.4f}.keras"
 
     model.save(path)
-    print(f"Model saved as {path}")
-    
+    print(f"Model saved as {path}\n")
+
     # 1. Capture model summary as a string for the text file
     stream = io.StringIO()
     model.summary(print_fn=lambda x: stream.write(x + '\n'))
@@ -265,14 +268,14 @@ def model_train(
 
     # --- SAVE TO EXCEL DATABASE ---
     excel_path = str(MODEL_DATABASE_XLSX)
-    
+
     # Create a DataFrame from the single run
     df_new = pd.DataFrame([model_info])
 
     if not os.path.exists(excel_path):
         # If file doesn't exist, create it
         df_new.to_excel(excel_path, index=False)
-        print(f"Created new database: {excel_path}")
+        print(f"Created new database: {excel_path}\n")
     else:
         # If exists, append the new row
         with pd.ExcelWriter(excel_path, mode='a', engine='openpyxl', if_sheet_exists='overlay') as writer:
@@ -283,13 +286,14 @@ def model_train(
             except Exception as e:
                 # Fallback if file is corrupted/empty
                 df_new.to_excel(excel_path, index=False)
-        print(f"Updated database at {excel_path}")
+        print(f"Updated database at {excel_path}\n")
 
     return model, history, final_loss, model_info, ds_dict, target_dict, RUL_dict, States_dict, train_ds_names, val_ds_names, test_ds_names, results_dir
-            
+
 def model_train_features(
-        net_type='fc_AE',         # 'fc_AE' or 'CNN_AE'
+        net_type='CNN_AE',         # 'fc_AE' or 'CNN_AE'
         include_benchmark=False,
+        enable_diff=False,  # Only relevant for CNN_AE; if True, the model will be trained on the difference between signal and benchmark features
         params=None,
         learning_rate=0.001,
         loss_weights=None,
@@ -325,7 +329,7 @@ def model_train_features(
 
     # When diff_bench is active (fc_AE + benchmark), the datastore pre-computes
     # signal - benchmark and returns a flat (N_FEAT,) vector, not (N_FEAT, 2).
-    enable_diff = (net_type == 'fc_AE' and include_benchmark)
+    enable_diff = (net_type == 'fc_AE' and include_benchmark) or (net_type == 'CNN_AE' and enable_diff)
     model_input_size = N_FEAT if enable_diff else flat_size
 
     # Build model
@@ -340,7 +344,7 @@ def model_train_features(
 
     elif net_type == 'CNN_AE':
         default_params = {"k_sparse": DEFAULT_K_SPARSE, "n_features": N_FEAT, "n_channels": n_channels,
-                          "filters": 16, "latent_dim": 16}
+                          "filters": 16, "latent_dim": 16, "drop_rate":0.2, "kernel_size": 15}
         if params is None:
             params = default_params
         else:
@@ -358,14 +362,14 @@ def model_train_features(
     Vloss_fun = {'reconstruction': 'mse', 'sHI': monotonicity_loss}
     Vloss_weights = loss_weights if loss_weights is not None else {'reconstruction': 1.0, 'sHI': 2.0}
 
-    train_dataset, val_dataset, test_dataset, ds_dict, target_dict, RUL_dict, States_dict = prepare_datastores(
+    train_dataset, val_dataset, test_dataset, ds_dict, target_dict, RUL_dict, States_dict, norm_stats = prepare_datastores(
         path_i, frequency_i, base_batch_size, test_batch_size,
         train_ds_names, val_ds_names, test_ds_names,
         include_benchmark=include_benchmark, features=True, diff_bench=enable_diff
     )
 
     #
-            
+
     model.compile(
         optimizer=Voptimizer,
         loss=Vloss_fun,
@@ -386,14 +390,16 @@ def model_train_features(
     ]
 
     # Train the model and capture the training history
-    history = model.fit(train_dataset, epochs=Vepochs, verbose=1, validation_data=val_dataset, callbacks=callbacks)
+    history = model.fit(train_dataset, epochs=Vepochs, verbose=0, validation_data=val_dataset, callbacks=callbacks)
 
-    final_loss = np.min(history.history['loss'])  # Use minimum loss achieved during training for naming and logging
-    final_loss_idx = np.argmin(history.history['loss'])
+    # EarlyStopping(restore_best_weights=True) restores the weights from the epoch
+    # with the lowest val_loss, so index metrics by that same epoch to keep the
+    # logged/reported numbers consistent with the model that actually gets saved.
+    final_loss_idx = np.argmin(history.history['val_loss'])
+    final_loss = history.history['loss'][final_loss_idx]
     rec_loss_at_final = history.history['reconstruction_loss'][final_loss_idx]
     lat_loss_at_final = history.history['sHI_loss'][final_loss_idx]
 
-    #validation losses at the same epoch as final training loss
     val_final_loss = history.history['val_loss'][final_loss_idx]
     val_rec_loss_at_final = history.history['val_reconstruction_loss'][final_loss_idx]
     val_lat_loss_at_final = history.history['val_sHI_loss'][final_loss_idx]
@@ -408,11 +414,11 @@ def model_train_features(
             filepath = os.path.join(results_dir, filepath)
         path = filepath
     else:
-        path = f"{results_dir}-{data_time}-{net_type}_features{bench_tag}_{final_loss:.4f}.h5"
-   
+        path = f"{results_dir}-{data_time}-{net_type}_features{bench_tag}_{final_loss:.4f}.keras"
+
     model.save(path)
-    print(f"Model saved as {path}")
-    
+    print(f"Model saved as {path}\n")
+
     # 1. Capture model summary as a string for the text file
     stream = io.StringIO()
     model.summary(print_fn=lambda x: stream.write(x + '\n'))
@@ -432,25 +438,10 @@ def model_train_features(
         "learning_rate": Vlearning_rate,
         "k_sparse": params.get("k_sparse", "N/A"),
         "trainable_params": trainable_count,
-        "hidden_layer_size1": params.get("hidden_layer_size1", "N/A"),
-        "hidden_layer_size2": params.get("hidden_layer_size2", "N/A"),
-        "hidden_layer_size3": params.get("hidden_layer_size3", "N/A"),
-        "hidden_layer_size4": params.get("hidden_layer_size4", "N/A"),
-        "desired_latent_size": params.get("desired_latent_size", "N/A"),
+        "filters": params.get("filters", "N/A"),
+        "latent_dim": params.get("latent_dim", "N/A"),
         "drop_rate": params.get("drop_rate", "N/A"),
-        "filter1": params.get("filter1", "N/A"),
-        "filter2": params.get("filter2", "N/A"),
-        "filter3": params.get("filter3", "N/A"),
-        "filter4": params.get("filter4", "N/A"),
-        "kernel_size1": params.get("kernel_size1", "N/A"),
-        "kernel_size2": params.get("kernel_size2", "N/A"),
-        "kernel_size3": params.get("kernel_size3", "N/A"),
-        "kernel_size4": params.get("kernel_size4", "N/A"),
-        "pool_size1": params.get("pool_size1", "N/A"),
-        "pool_size2": params.get("pool_size2", "N/A"),
-        "pool_size3": params.get("pool_size3", "N/A"),
-        "pool_size4": params.get("pool_size4", "N/A"),
-        "n_blocks": params.get("n_blocks", "N/A"),
+        "kernel_size": params.get("kernel_size", "N/A"),
         "optimizer": str(Voptimizer.__class__.__name__),
         "loss_weights": str(Vloss_weights),
         "path_index": path_i,
@@ -461,15 +452,15 @@ def model_train_features(
     }
 
     # --- SAVE TO EXCEL DATABASE ---
-    excel_path = str(MODEL_DATABASE_XLSX)
-    
+    excel_path = str(MODEL_DATABASE_XLSX_FEATURES)
+
     # Create a DataFrame from the single run
     df_new = pd.DataFrame([model_info])
 
     if not os.path.exists(excel_path):
         # If file doesn't exist, create it
         df_new.to_excel(excel_path, index=False)
-        print(f"Created new database: {excel_path}")
+        print(f"Created new database: {excel_path}\n")
     else:
         # If exists, append the new row
         with pd.ExcelWriter(excel_path, mode='a', engine='openpyxl', if_sheet_exists='overlay') as writer:
@@ -480,31 +471,25 @@ def model_train_features(
             except Exception as e:
                 # Fallback if file is corrupted/empty
                 df_new.to_excel(excel_path, index=False)
-        print(f"Updated database at {excel_path}")
+        print(f"Updated database at {excel_path}\n")
 
-    return model, history, final_loss, rec_loss_at_final, lat_loss_at_final, val_final_loss, val_rec_loss_at_final, val_lat_loss_at_final, model_info, ds_dict, target_dict, RUL_dict, States_dict, train_ds_names, val_ds_names, test_ds_names, results_dir
-            
-
+    return model, history, final_loss, rec_loss_at_final, lat_loss_at_final, val_final_loss, val_rec_loss_at_final, val_lat_loss_at_final, model_info, ds_dict, target_dict, RUL_dict, States_dict, train_ds_names, val_ds_names, test_ds_names, results_dir, norm_stats
 
 
 if __name__ == "__main__":
     seed = 42
     np.random.seed(seed)
-    net_type = 'CNN_AE' #'fc_AE' # Options: 'fc_AE', 'CNN_AE'
-    basic_panels = BASE_PANELS # panel that is used for validation
-    final_loss_list = []
-    rec_train_loss_list = []
-    lat_train_loss_list = []
-    rec_val_loss_list = []
-    lat_val_loss_list = []
+    net_type = 'CNN_AE'  # Options: 'fc_AE', 'CNN_AE'
+    basic_panels = BASE_PANELS  # panels used for cross-validation (each held out once)
     features = True
-    benchmark = True
-    p_idx =0
-    path_indexes = [0]  # Example path indexes to iterate over; adjust as needed
+    benchmark = False
+    enable_diff = "True" # Only relevant for CNN_AE; if True, the model will be trained on the difference between signal and benchmark features
+    state_idx_for_recon = 0  # example state shown in the per-fold reconstruction plots
+    path_indexes = [0]  # path indexes to iterate over; adjust as needed
+
     losses_of_paths = {panel: np.zeros(len(path_indexes)) for panel in basic_panels}
     rec_losses_of_paths = {panel: np.zeros(len(path_indexes)) for panel in basic_panels}
     lat_losses_of_paths = {panel: np.zeros(len(path_indexes)) for panel in basic_panels}
-
     val_losses_of_paths = {panel: np.zeros(len(path_indexes)) for panel in basic_panels}
     val_rec_losses_of_paths = {panel: np.zeros(len(path_indexes)) for panel in basic_panels}
     val_lat_losses_of_paths = {panel: np.zeros(len(path_indexes)) for panel in basic_panels}
@@ -513,177 +498,132 @@ if __name__ == "__main__":
     val_average_final_loss = np.zeros(len(path_indexes))
 
     for path_i, p_idx in enumerate(path_indexes):
-        if len(path_indexes) == 1:
+        path_dir = os.path.join(str(CROSS_VALIDATION_RESULTS_AE_DIR), f"path_{p_idx}")
+        os.makedirs(path_dir, exist_ok=True)
 
-            for panel in basic_panels:
-                print(f"Validating using panel {panel}...")
-                train_ds_names = [p for p in basic_panels if p != panel]
-                val_ds_names = [panel]
+        final_loss_list = np.zeros(len(basic_panels))
+        val_final_loss_list = np.zeros(len(basic_panels))
+        rec_train_loss_list, lat_train_loss_list = [], []
+        rec_val_loss_list, lat_val_loss_list = [], []
+        fold_entries = []  # (panel_held_out, model, norm_stats) -- used to build the ensemble
+        last_ds_dict, last_States_dict = None, None
 
-                if features:
-                    params = {
-                        "k_sparse": DEFAULT_K_SPARSE,
-                        # input_size is overridden by model_train_features to match the datastore shape
-                    }
-                    model, history, final_loss, rec_loss_at_final, lat_loss_at_final, val_final_loss, val_rec_loss_at_final, val_lat_loss_at_final, model_info, ds_dict, target_dict, RUL_dict, States_dict, train_ds_names, val_ds_names, test_ds_names, results_dir = model_train_features(
-                        net_type='fc_AE',         # switch to 'CNN_AE' to use the CNN variant
-                        include_benchmark=benchmark,
-                        epochs=200, learning_rate=0.001,
-                        params=params, path_i=p_idx, train_ds_names=train_ds_names, val_ds_names=val_ds_names,
-                        seed=seed, results_dir=f"models_features", filepath=f"Model_val_{panel}_{p_idx}.h5"
-                    )
-                    recon_name = 'reconstruction'
-                    latent_name = 'sHI'
+        t_start = pd.Timestamp.now()
+        for i, panel in enumerate(basic_panels):
+            print(f"Validating using panel {panel}...")
+            train_ds_names = [p for p in basic_panels if p != panel]
+            val_ds_names = [panel]
 
-                else:
-                    model, history, final_loss, model_info, ds_dict, target_dict, RUL_dict, States_dict, train_ds_names, val_ds_names, test_ds_names, results_dir = model_train(net_type, path_i=0, epochs=100, n_blocks=2, train_ds_names=train_ds_names, val_ds_names=val_ds_names, seed=seed, results_dir=str(MODEL_TRAIN_RESULTS_DIR / pd.Timestamp.now().strftime("%Y-%m-%d_%H") / f"{net_type}_panel_{panel}"))
-
-                    recon_name = 'final_1' if net_type == 'CNN_AE' else 'fc_output_1'
-                    latent_name = 'fc_latent_1'
-
-                rec_train_loss_list.append(history.history[f'{recon_name}_loss'])
-                lat_train_loss_list.append(history.history[f'{latent_name}_loss'])
-                rec_val_loss_list.append(history.history[f'val_{recon_name}_loss'])
-                lat_val_loss_list.append(history.history[f'val_{latent_name}_loss'])
-
-                
-                # print history keys
-                print("History keys:", history.history.keys())
-                # Plot loss curves
-                plt.figure(figsize=(12, 5))
-                plt.subplot(1, 2, 1)
-                plt.plot(history.history[f'{recon_name}_loss'], label='Reconstruction Loss')
-                plt.plot(history.history[f'val_{recon_name}_loss'], label='Val Reconstruction Loss')
-                plt.title('Reconstruction Loss Over Epochs')
-                plt.xlabel('Epoch')
-                plt.ylabel('Loss')
-                plt.legend()
-
-                plt.subplot(1, 2, 2)
-                plt.plot(history.history[f'{latent_name}_loss'], label='Latent Loss')
-                plt.plot(history.history[f'val_{latent_name}_loss'], label='Val Latent Loss')
-                plt.title('Latent Loss Over Epochs')
-                plt.xlabel('Epoch')
-                plt.ylabel('Loss')
-                plt.legend()
-                plt.tight_layout()
-                plt.savefig(f"{results_dir}loss_curves_{net_type}_{final_loss:.4f}.png")
-
-                # Visualize sHI vs RUL for the test dataset
-                ctx = PlotContext(
-                    train_ds_names=train_ds_names,
-                    validation_ds_names=val_ds_names,
-                    test_ds_names=test_ds_names,
-                    ds_dict=ds_dict,
-                    target_dict=target_dict,
-                    RUL_dict=RUL_dict,
-                    States_dict=States_dict
+            if features:
+                params = {
+                    "k_sparse": DEFAULT_K_SPARSE,
+                    "k_sparse": DEFAULT_K_SPARSE, "n_features": 33, "n_channels": 2 if (benchmark ) else 1,
+                          "filters": 16, "latent_dim": 16, "drop_rate":0.2, "kernel_size": 15
+                    # input_size is overridden by model_train_features to match the datastore shape
+                }
+                (model, history, final_loss, rec_loss_at_final, lat_loss_at_final,
+                 val_final_loss, val_rec_loss_at_final, val_lat_loss_at_final,
+                 model_info, ds_dict, target_dict, RUL_dict, States_dict,
+                 train_ds_names, val_ds_names, test_ds_names, results_dir, norm_stats) = model_train_features(
+                    net_type=net_type,         # switch to 'CNN_AE' to use the CNN variant
+                    include_benchmark=benchmark,
+                    enable_diff=enable_diff,
+                    epochs=200, learning_rate=0.001,
+                    params=params, path_i=p_idx, train_ds_names=train_ds_names, val_ds_names=val_ds_names,
+                    seed=seed, results_dir=path_dir, filepath=f"Model_val_{panel}.keras",
                 )
-                
-                show = False
-                save = False
+                recon_name, latent_name = 'reconstruction', 'sHI'
 
-                plot_sHI_vs_RUL(model, ctx, state_idx=0, dataset_type="train", show=show, save=save, dir=results_dir, plot_name=f'{net_type}_{final_loss:.4f}_sHI_vs_RUL_train')
-                plot_sHI_vs_RUL(model, ctx, state_idx=0, dataset_type="validation", show=show, save=save, dir=results_dir, plot_name=f'{net_type}_{final_loss:.4f}_sHI_vs_RUL_val')
-                plot_sHI_vs_RUL(model, ctx, state_idx=0, dataset_type="test", show=show, save=save, dir=results_dir, plot_name=f'{net_type}_{final_loss:.4f}_sHI_vs_RUL_test')
-                # if not show: 
-                #     #clear the plots to save memory
-                #     plt.close('all')
-                final_loss_list.append(final_loss)
+                plot_sHI_cv_fold(model, ds_dict, States_dict, basic_panels, panel,
+                                  save_path=os.path.join(path_dir, f"sHI_fold_val_{panel}.png"))
+                plot_reconstruction_cv_fold(model, ds_dict, States_dict, basic_panels, panel, state_idx_for_recon,
+                                             save_path=os.path.join(path_dir, f"reconstruction_fold_val_{panel}.png"))
 
-            print("Final losses for each panel:", final_loss_list)
+                fold_entries.append((panel, model, norm_stats))
+                last_ds_dict, last_States_dict = ds_dict, States_dict
+            else:
+                model, history, final_loss, model_info, ds_dict, target_dict, RUL_dict, States_dict, train_ds_names, val_ds_names, test_ds_names, results_dir = model_train(
+                    net_type, path_i=p_idx, epochs=100, n_blocks=2,
+                    train_ds_names=train_ds_names, val_ds_names=val_ds_names, seed=seed,
+                    results_dir=str(MODEL_TRAIN_RESULTS_DIR / pd.Timestamp.now().strftime("%Y-%m-%d_%H") / f"{net_type}_panel_{panel}"),
+                )
+                recon_name = 'final_1' if net_type == 'CNN_AE' else 'fc_output_1'
+                latent_name = 'fc_latent_1'
+                val_final_loss = history.history['val_loss'][-1]
+                rec_loss_at_final = history.history[f'{recon_name}_loss'][-1]
+                lat_loss_at_final = history.history[f'{latent_name}_loss'][-1]
+                val_rec_loss_at_final = history.history[f'val_{recon_name}_loss'][-1]
+                val_lat_loss_at_final = history.history[f'val_{latent_name}_loss'][-1]
 
-            average_final_loss = np.mean(final_loss_list)
-            print(f"Average final loss across panels: {average_final_loss:.4f}")
+            rec_train_loss_list.append(history.history[f'{recon_name}_loss'])
+            lat_train_loss_list.append(history.history[f'{latent_name}_loss'])
+            rec_val_loss_list.append(history.history[f'val_{recon_name}_loss'])
+            lat_val_loss_list.append(history.history[f'val_{latent_name}_loss'])
 
-            #Learning progress:
-            plt.figure(figsize=(16, 6))
+            final_loss_list[i] = final_loss
+            val_final_loss_list[i] = val_final_loss
+            losses_of_paths[panel][path_i] = final_loss
+            rec_losses_of_paths[panel][path_i] = rec_loss_at_final
+            lat_losses_of_paths[panel][path_i] = lat_loss_at_final
+            val_losses_of_paths[panel][path_i] = val_final_loss
+            val_rec_losses_of_paths[panel][path_i] = val_rec_loss_at_final
+            val_lat_losses_of_paths[panel][path_i] = val_lat_loss_at_final
 
-            # Plot reconstruction loss curves for all panels (on separate subplots)
-            for i, panel in enumerate(basic_panels):
-                plt.subplot(2, 4, i + 1)
-                plt.plot(rec_train_loss_list[i], label='Train')
-                plt.plot(rec_val_loss_list[i], label='Val')
-                plt.title(f'Recon Loss - Panel {panel}')
-                plt.xlabel('Epoch')
-                plt.ylabel('Loss')
-                plt.legend()
+        t_end = pd.Timestamp.now()
+        print(f"Training and validation for path index {p_idx} completed in {t_end - t_start}.\n")
+        print("Final losses for each panel:", final_loss_list)
+        average_final_loss[path_i] = np.mean(final_loss_list)
+        val_average_final_loss[path_i] = np.mean(val_final_loss_list)
+        print(f"Average final loss across panels: {average_final_loss[path_i]:.4f}\n")
 
-            # Plot latent loss curves for all panels (on separate subplots)
-            for i, panel in enumerate(basic_panels):
-                plt.subplot(2, 4, i + 5)
-                plt.plot(lat_train_loss_list[i], label='Train')
-                plt.plot(lat_val_loss_list[i], label='Val')
-                plt.title(f'Latent Loss - Panel {panel}')
-                plt.xlabel('Epoch')
-                plt.ylabel('Loss')
-                plt.legend()
+        # Learning curves: reconstruction loss (top row) + latent loss (bottom row), one column per panel
+        plt.figure(figsize=(16, 6))
+        for i, panel in enumerate(basic_panels):
+            plt.subplot(2, 4, i + 1)
+            plt.plot(rec_train_loss_list[i], label='Train')
+            plt.plot(rec_val_loss_list[i], label='Val')
+            plt.title(f'Recon Loss - Panel {panel}')
+            plt.xlabel('Epoch')
+            plt.ylabel('Loss')
+            plt.legend()
 
-            plt.tight_layout()
-            plt.savefig(f"{results_dir}learning_curves_{net_type}_{average_final_loss:.4f}.png")
-            plt.show()
+        for i, panel in enumerate(basic_panels):
+            plt.subplot(2, 4, i + 5)
+            plt.plot(lat_train_loss_list[i], label='Train')
+            plt.plot(lat_val_loss_list[i], label='Val')
+            plt.title(f'Latent Loss - Panel {panel}')
+            plt.xlabel('Epoch')
+            plt.ylabel('Loss')
+            plt.legend()
 
-            # check dialations 
-            # check multiple kernels 
-            # number of blocks as a hyperparameter
-            # add maxpooling
-        else:
+        plt.tight_layout()
+        plt.savefig(os.path.join(path_dir, f"learning_curves_{net_type}_{average_final_loss[path_i]:.4f}.png"))
+        plt.close()
 
-            final_loss_list = np.zeros(len(basic_panels))
-            val_final_loss_list = np.zeros(len(basic_panels))
+        # Ensemble of the 4 cross-validation folds
+        if features and len(fold_entries) == len(basic_panels):
+            ensemble_model = build_ensemble_ae(fold_entries)
+            ensemble_model.save(os.path.join(path_dir, "ensemble_model.keras"))
+            _, _, ref_norm_stats = fold_entries[0]
+            plot_ensemble_sHI(
+                ensemble_model, last_ds_dict, ref_norm_stats, last_States_dict, basic_panels,
+                save_path=os.path.join(path_dir, "ensemble_sHI.png"),
+            )
 
-            for i, panel in enumerate(basic_panels):
-                print(f"Validating using panel {panel}...")
-                train_ds_names = [p for p in basic_panels if p != panel]
-                val_ds_names = [panel]
+        # check dialations
+        # check multiple kernels
+        # number of blocks as a hyperparameter
+        # add maxpooling
 
-                if features:
-                    params = {
-                        "k_sparse": DEFAULT_K_SPARSE,
-                        # input_size is overridden by model_train_features to match the datastore shape
-                    }
-                    model, history, final_loss, rec_loss_at_final, lat_loss_at_final, val_final_loss, val_rec_loss_at_final, val_lat_loss_at_final, model_info, ds_dict, target_dict, RUL_dict, States_dict, train_ds_names, val_ds_names, test_ds_names, results_dir = model_train_features(
-                        net_type='fc_AE',         # switch to 'CNN_AE' to use the CNN variant
-                        include_benchmark=benchmark,
-                        epochs=200, learning_rate=0.001,
-                        params=params, path_i=p_idx, train_ds_names=train_ds_names, val_ds_names=val_ds_names,
-                        seed=seed, results_dir=f"models_features", filepath=f"Model_val_{panel}_{p_idx}.h5"
-                    )
-                    recon_name = 'reconstruction'
-                    latent_name = 'sHI'
-                else:
-                    model, history, final_loss, model_info, ds_dict, target_dict, RUL_dict, States_dict, train_ds_names, val_ds_names, test_ds_names, results_dir = model_train(net_type, path_i=0, epochs=100, n_blocks=2, train_ds_names=train_ds_names, val_ds_names=val_ds_names, seed=seed, results_dir=str(MODEL_TRAIN_RESULTS_DIR / pd.Timestamp.now().strftime("%Y-%m-%d_%H") / f"{net_type}_panel_{panel}"))
-                    
-                    recon_name = 'final_1' if net_type == 'CNN_AE' else 'fc_output_1'
-                    latent_name = 'fc_latent_1'
-                    
-                # training
-                final_loss_list[i] = final_loss          # i = panel index, correct
-                losses_of_paths[panel][path_i] = final_loss
-                rec_losses_of_paths[panel][path_i] = rec_loss_at_final
-                lat_losses_of_paths[panel][path_i] = lat_loss_at_final
-
-                # validation
-                val_final_loss_list[i] = val_final_loss  # i = panel index, correct
-                val_losses_of_paths[panel][path_i] = val_final_loss
-                val_rec_losses_of_paths[panel][path_i] = val_rec_loss_at_final
-                val_lat_losses_of_paths[panel][path_i] = val_lat_loss_at_final
-
-
-            print("Final losses for each panel:", final_loss_list)
-
-            average_final_loss[path_i] = np.mean(final_loss_list)
-            val_average_final_loss[path_i] = np.mean(val_final_loss_list)
-            
-            print(f"Average final loss across panels: {average_final_loss[i]:.4f}")
-        
     # save the losses of all paths in a csv file for later analysis
+    summary_dir = str(CROSS_VALIDATION_RESULTS_AE_DIR)
+    os.makedirs(summary_dir, exist_ok=True)
     losses_df = pd.DataFrame({
         'path_index': path_indexes,
         'average_final_loss': average_final_loss,
         'val_average_final_loss': val_average_final_loss,
     })
-    losses_df.to_csv(f"{results_dir}losses_of_paths.csv", index=False)
+    losses_df.to_csv(os.path.join(summary_dir, "losses_of_paths.csv"), index=False)
 
     # save losses per panel and path in separate csv files
     for panel in basic_panels:
@@ -696,24 +636,25 @@ if __name__ == "__main__":
             'training_latent_loss': lat_losses_of_paths[panel],
             'validation_latent_loss': val_lat_losses_of_paths[panel],
         })
-        panel_df.to_csv(f"{results_dir}losses_panel_{panel}.csv", index=False)
+        panel_df.to_csv(os.path.join(summary_dir, f"losses_panel_{panel}.csv"), index=False)
+
     if len(path_indexes) > 1:
         # Plot final losses across panels for each path index
         plt.figure(figsize=(10, 6))
-        
-        plt.plot(path_indexes, average_final_loss, marker='o', label=f'Path Index {p_idx}')
-        plt.plot(path_indexes, val_average_final_loss, marker='s', label=f'Path Index {p_idx} (Validation)')
-        plt.title('Final Loss Across Panels for Each Path Index')
-        plt.xlabel('Panel Used for Validation')
+        plt.plot(path_indexes, average_final_loss, marker='o', label='Training')
+        plt.plot(path_indexes, val_average_final_loss, marker='s', label='Validation')
+        plt.title('Average Final Loss Across Panels vs Path Index')
+        plt.xlabel('Path Index')
         plt.ylabel('Final Loss')
         plt.legend()
+        plt.savefig(os.path.join(summary_dir, "final_loss_across_paths.png"))
         plt.show()
 
-        # Plot 4 subplots for every validation panel, on each plot there is training and validation performance for every path 
-        # 3 such figures are created: total loss, reconstruction loss and latent loss
+        # Plot 4 subplots for every validation panel, on each plot there is training and validation
+        # performance for every path index. 3 such figures are created: total, reconstruction, latent loss.
         fig_total, axs_total = plt.subplots(2, 2, figsize=(12, 10))
         fig_rec, axs_rec = plt.subplots(2, 2, figsize=(12, 10))
-        fig_lat, axs_lat = plt.subplots(2, 2, figsize=(12, 10)) 
+        fig_lat, axs_lat = plt.subplots(2, 2, figsize=(12, 10))
         for i, panel in enumerate(basic_panels):
             row, col = divmod(i, 2)
             axs_total[row, col].scatter(path_indexes, losses_of_paths[panel], marker='o', label='Training Loss')
@@ -737,13 +678,7 @@ if __name__ == "__main__":
             axs_lat[row, col].set_ylabel('Loss')
             axs_lat[row, col].legend()
 
+        fig_total.savefig(os.path.join(summary_dir, "total_loss_across_paths.png"))
+        fig_rec.savefig(os.path.join(summary_dir, "reconstruction_loss_across_paths.png"))
+        fig_lat.savefig(os.path.join(summary_dir, "latent_loss_across_paths.png"))
         plt.show()
-
-            
-
-
-
-
-
-
-

@@ -57,6 +57,21 @@ class KSparse(tf.keras.layers.Layer):
         return inputs * mask
 
 
+class ExpandLastDim(tf.keras.layers.Layer):
+    '''tf.expand_dims(x, -1) as a proper Layer -- a Lambda wrapping this doesn't
+    reload reliably once nested inside another model (e.g. an averaging ensemble).'''
+
+    def call(self, inputs):
+        return tf.expand_dims(inputs, -1)
+
+
+class SqueezeLastDim(tf.keras.layers.Layer):
+    '''tf.squeeze(x, axis=-1) as a proper Layer -- see ExpandLastDim.'''
+
+    def call(self, inputs):
+        return tf.squeeze(inputs, axis=-1)
+
+
 def build_deep_fully_connected_network(params):
 	params = dict(params)
 	input_size = params.get("input_size", 4000)
@@ -280,11 +295,13 @@ def build_fc_AE_features(params):
 	input_size = params.get("input_size", 19+14)  # total input width (single or doubled for benchmark)
 	n_features = params.get("n_features", input_size)  # single-channel feature count
 	k_sparse = params.get("k_sparse", DEFAULT_K_SPARSE)
+	latent_dim = params.get("latent_dim", 16)
+	drop_rate = params.get("drop_rate", 0.0)
 	has_benchmark = (input_size == n_features * 2)  # True when benchmark features are appended
 
 	he = tf.keras.initializers.HeNormal()
 	narrow = tf.keras.initializers.TruncatedNormal(stddev=0.05)
-
+	reg = tf.keras.regularizers.l2(params.get("l2_reg", 1e-4))
 	
 
 	if has_benchmark:
@@ -297,12 +314,20 @@ def build_fc_AE_features(params):
 		inp = tf.keras.Input(shape=(input_size,), name="input")
 		x = inp
 
+	x = tf.keras.layers.Dense(latent_dim, kernel_initializer=he, kernel_regularizer=reg, name="enc_dense")(x)
+	x = tf.keras.layers.BatchNormalization(name="latent_bn")(x)
+	x = tf.keras.layers.Activation("elu", name="enc_act")(x)
+	x = tf.keras.layers.Dropout(drop_rate, name="latent_dropout")(x)
 	k_sparse_layer = KSparse(k_sparse, name="latent_space")(x)
 
+	
 	lat = tf.keras.layers.Dense(1, activation=None, kernel_initializer=narrow, bias_initializer="zeros", kernel_regularizer=None, name="sHI")(k_sparse_layer)
 
 	rec_size = n_features if has_benchmark else input_size
-	rec = tf.keras.layers.Dense(rec_size, activation=None, kernel_initializer=he, bias_initializer="zeros", kernel_regularizer=None, name="reconstruction")(k_sparse_layer)
+	rec = tf.keras.layers.Dense(latent_dim, kernel_initializer=he, kernel_regularizer=reg, name="dec_dense")(k_sparse_layer)
+	rec = tf.keras.layers.BatchNormalization(name="dec_bn")(rec)
+	rec = tf.keras.layers.Activation("elu", name="dec_act")(rec)
+	rec = tf.keras.layers.Dense(rec_size, activation=None, kernel_initializer=he, bias_initializer="zeros", kernel_regularizer=None, name="reconstruction")(rec)
 
 	model = tf.keras.Model(inputs=inp, outputs=[lat, rec], name="fc_AE_features")
 	return model
@@ -313,9 +338,11 @@ def build_CNN_AE_features(params):
 	The [1,2] kernel mixes signal and benchmark channels at each feature position.
 
 	Input:   (batch, n_feat, n_channels)          e.g. (33, 1) or (33, 2) with benchmark
-	Encoder: expand → Conv2D([1,2]) → BN → Dropout → Flatten → Dense(latent) → KSparse
+	Encoder: expand → Conv2D([kernel_size,n_channels], valid) → BN → Dropout → Flatten → Dense(latent) → KSparse
 	sHI:     KSparse → Dense(1)
-	Decoder: KSparse → Dense(n_feat*filters) → Reshape → Conv2DTranspose([1,2]) → squeeze
+	Decoder: KSparse → Dense(conv_out_h*filters) → BN → ELU → Reshape → Conv2DTranspose([kernel_size,n_channels], valid) → squeeze
+	         -- the transpose conv is the exact shape-inverse of the encoder's Conv2D
+	         (valid-mode transpose conv adds back kernel_size-1 and n_channels-1).
 	Output:  (batch, n_feat, n_channels)           matches input
 	'''
 	n_feat     = params.get("n_features", DEFAULT_N_FEATURES)
@@ -324,6 +351,8 @@ def build_CNN_AE_features(params):
 	latent_dim = params.get("latent_dim", 16)
 	k_sparse   = params.get("k_sparse", DEFAULT_K_SPARSE)
 	drop_rate  = params.get("drop_rate", 0.0)
+	kernel_size = params.get("kernel_size", n_feat)  # [height, width] of the conv kernel
+	conv_out_h = n_feat - kernel_size + 1  # encoder Conv2D output height (padding="valid")
 
 	he     = tf.keras.initializers.HeNormal()
 	narrow = tf.keras.initializers.TruncatedNormal(stddev=0.05)
@@ -333,8 +362,8 @@ def build_CNN_AE_features(params):
 
 	# ── Encoder ──────────────────────────────────────────────────────────
 	# Add channel dim so Conv2D sees (n_feat, n_channels, 1)
-	x = tf.keras.layers.Lambda(lambda t: tf.expand_dims(t, -1), name="expand")(inp)
-	x = tf.keras.layers.Conv2D(filters, kernel_size=[n_feat, n_channels], padding="valid",
+	x = ExpandLastDim(name="expand")(inp)
+	x = tf.keras.layers.Conv2D(filters, kernel_size=[kernel_size, n_channels], padding="valid",
 	                           activation=None, kernel_initializer=he,
 	                           kernel_regularizer=reg, name="enc_conv")(x)
 	# shape: (batch, n_feat, 1, filters)
@@ -354,15 +383,21 @@ def build_CNN_AE_features(params):
 	                            kernel_regularizer=reg, name="sHI")(z)
 
 	# ── Decoder (symmetric) ───────────────────────────────────────────────
-	x = tf.keras.layers.Dense(n_feat * filters, kernel_initializer=he,
+	# Mirrors the encoder exactly: reshape back to the (conv_out_h, 1, filters)
+	# bottleneck the encoder's Conv2D produced, then a single Conv2DTranspose with the
+	# same kernel_size inverts that Conv2D in one step -- valid-mode transpose conv
+	# output = input + kernel - 1, so height conv_out_h+kernel_size-1 == n_feat and
+	# width 1+n_channels-1 == n_channels, for any kernel_size/n_channels.
+	x = tf.keras.layers.Dense(conv_out_h * filters, kernel_initializer=he,
 	                          kernel_regularizer=reg, name="dec_dense")(z)
-	x = tf.keras.layers.Reshape((n_feat, 1, filters), name="reshape")(x)
-	x= tf.keras.layers.UpSampling2D(size=(1, n_channels), name="upsample")(x)  # (batch, n_feat, n_channels, filters)
-	x = tf.keras.layers.Conv2DTranspose(1, kernel_size=[1, n_channels], padding="same",
+	x = tf.keras.layers.BatchNormalization(name="dec_bn")(x)
+	x = tf.keras.layers.Activation("elu", name="dec_act")(x)
+	x = tf.keras.layers.Reshape((conv_out_h, 1, filters), name="reshape")(x)
+	x = tf.keras.layers.Conv2DTranspose(1, kernel_size=[kernel_size, n_channels], padding="valid",
 	                                    activation=None, kernel_initializer=he,
 	                                    kernel_regularizer=reg, name="dec_conv")(x)
 	# shape: (batch, n_feat, n_channels, 1) → squeeze last dim
-	rec = tf.keras.layers.Lambda(lambda t: tf.squeeze(t, axis=-1), name="reconstruction")(x)
+	rec = SqueezeLastDim(name="reconstruction")(x)
 
 	model = tf.keras.Model(inputs=inp, outputs=[lat, rec], name="CNN_AE_features")
 	return model

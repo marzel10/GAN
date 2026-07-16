@@ -11,10 +11,13 @@ Hyperparameters for FC_AE:
     - latent_dim, k_sparse (bounded by latent_dim), drop_rate, batch_size
 
 Hyperparameters for CNN_AE:
-    - latent_dim, k_sparse (bounded by latent_dim), drop_rate, filters_bench, filters_path, batch_size
+    - k_sparse (bounded by latent_dim), drop_rate, filters_bench, filters_path, batch_size
+    - latent_dim is fixed at CNN_FIXED_LATENT_DIM (not tuned) for this architecture
 
 Hardcoded constants:
-    - K_SPARSE_PENALTY_WEIGHT: weight for the k-sparse penalty added to the loss (diagnostic only, see below)
+    - K_SPARSE_PENALTY_WEIGHT: weight for the k-sparse penalty subtracted from the search
+      objective (see below) -- larger k_sparse is penalized so the search doesn't just
+      chase whatever k_sparse happens to maximize raw fitness.
     - TRAIN_DS_NAMES, VAL_DS_NAMES, TEST_DS_NAMES: panel splits for training/validation/testing
     - CV_PANELS: panels used for cross-validation (leave-one-out)
     - EPOCHS_PER_FOLD: number of epochs to train in each fold of cross-validation
@@ -23,16 +26,19 @@ Hardcoded constants:
     - loss_weights: weights for the reconstruction loss and latent loss (currently fixed at 1.0 and 2.0)
     - Test set is always 123
 
-Search objective: mean_fitness (direction="max"), computed per CV fold as
-a*monotonicity + b*trendability + c*prognosability (see fitness_objective, and
-prognostic_criteria.py for the three underlying criteria) from each fold's trained
-model's own sHI predictions across CV_PANELS. This replaced the original
-mean_val_loss_penalized objective, which is still computed and returned every trial
-purely as a training diagnostic (plotted, but no longer drives the search) -- note its
-magnitude isn't directly comparable across different batch_size values or training
-epochs, since monotonicity_loss sums (not averages) an unbounded per-pair term over the
-batch, so it scales with batch_size and with how monotonic the current predictions
-happen to be, independent of overall model quality.
+Search objective: "Objective" (direction="max") = mean_fitness - k_sparse_penalty(k_sparse),
+where mean_fitness is computed per CV fold as a*monotonicity + b*trendability +
+c*prognosability (see fitness_objective, and prognostic_criteria.py for the three
+underlying criteria) from each fold's trained model's own sHI predictions across
+CV_PANELS, and k_sparse_penalty is a fixed per-trial penalty (weight * k_sparse) that
+discourages the search from picking larger k_sparse values purely because they raise
+raw fitness. mean_fitness itself is also reported every trial as an unpenalized
+diagnostic (that's what's plotted). mean_val_loss / mean_train_loss are likewise still
+computed and returned every trial purely as training diagnostics (plotted, but don't
+drive the search) -- note their magnitude isn't directly comparable across different
+batch_size values or training epochs, since monotonicity_loss sums (not averages) an
+unbounded per-pair term over the batch, so it scales with batch_size and with how
+monotonic the current predictions happen to be, independent of overall model quality.
 
 At the end train and validation datasets are assumed and latent representations and signal reconstructions are ploted.
 """
@@ -94,7 +100,7 @@ HP_COLS = {
     ],
     # CNN AE has the following HP
     "CNN_AE": [
-        "k_sparse_frac", "filters_bench", "filters_path", "latent_dim", "drop_rate", "batch_size"
+        "k_sparse_frac", "filters_bench", "filters_path",  "drop_rate", "batch_size"
     ],
 }
 
@@ -108,6 +114,11 @@ TEST_DS_NAMES = VAL_123_SUBPANELS + TEST_123_SUBPANELS
 
 CV_PANELS = BASE_PANELS   # leave-one-out folds
 EPOCHS_PER_FOLD = 100
+
+# CNN_AE's latent_dim is fixed (not tuned) -- used by build_model, MyTuner.run_trial (for
+# the k_sparse penalty computation), and the final retrain's final_params, so all three
+# agree on what latent_dim the model actually used during search.
+CNN_FIXED_LATENT_DIM = 24
 
 MODEL_DB_DIR = str(BO_RESULTS_DIR)
 
@@ -146,30 +157,13 @@ def get_batch_size_hp(hp):
     return hp.Int("batch_size", min_value=4, max_value=32, step=4)
 
 
-class KSparsePenaltyCallback(tf.keras.callbacks.Callback):
-    """Adds penalized loss metrics to logs at end of each epoch."""
-
-    def __init__(self, k_sparse, weight=K_SPARSE_PENALTY_WEIGHT):
-        super().__init__()
-        self.k_sparse = int(k_sparse)
-        self.weight = float(weight)
-
-    def on_epoch_end(self, epoch, logs=None):
-        if logs is None:
-            return
-        penalty = k_sparse_penalty(self.k_sparse, self.weight)
-        if "loss" in logs:
-            logs["loss_penalized"] = float(logs["loss"]) + penalty
-        if "val_loss" in logs:
-            logs["val_loss_penalized"] = float(logs["val_loss"]) + penalty
-
-
 # ─── Model builder ────────────────────────────────────────────────────────────
 def build_model(hp, model_type="fc_AE"):
     # Shared across both architectures -- sampled once per trial; build_model may be
     # called multiple times (once per CV fold) with the same hp object, and KerasTuner
     # caches by name, so repeat calls with identical bounds just reuse the same value.
-    latent_dim = get_latent_dim_hp(hp)
+    # latent_dim is tuned for fc_AE but fixed for CNN_AE (see CNN_FIXED_LATENT_DIM).
+    latent_dim = CNN_FIXED_LATENT_DIM if model_type == "CNN_AE" else get_latent_dim_hp(hp)
     k_sparse = resolve_k_sparse(get_k_sparse_frac_hp(hp), latent_dim)
     drop_rate = get_drop_rate_hp(hp)
 
@@ -259,11 +253,14 @@ class MyTuner(kt.BayesianOptimization):
     def run_trial(self, trial, *args, **kwargs):
         hp = trial.hyperparameters
         bs = get_batch_size_hp(hp)
-        latent_dim = get_latent_dim_hp(hp)
+        # Must match build_model's latent_dim resolution exactly, or the k_sparse used
+        # here for the penalty won't correspond to the k_sparse actually built into the
+        # model (see CNN_FIXED_LATENT_DIM).
+        latent_dim = CNN_FIXED_LATENT_DIM if self.model_type == "CNN_AE" else get_latent_dim_hp(hp)
         k_sparse = resolve_k_sparse(get_k_sparse_frac_hp(hp), latent_dim)
 
-        fold_val, fold_val_pen = [], []
-        fold_tr,  fold_tr_pen  = [], []
+        fold_val = []
+        fold_tr = []
         fold_fitness = []
 
         # run cross-validation folds for every panel in the cv_panels
@@ -298,7 +295,6 @@ class MyTuner(kt.BayesianOptimization):
                 validation_data=val_ds,
                 epochs=self.epochs_per_fold,
                 callbacks=[
-                    KSparsePenaltyCallback(k_sparse=k_sparse),
                     tf.keras.callbacks.EarlyStopping(
                         monitor="val_loss",
                         patience=10,
@@ -316,9 +312,7 @@ class MyTuner(kt.BayesianOptimization):
 
             h = history.history
             fold_val.append(min(h.get("val_loss", [float("inf")])))
-            fold_val_pen.append(min(h.get("val_loss_penalized", [float("inf")])))
             fold_tr.append(min(h.get("loss", [float("inf")])))
-            fold_tr_pen.append(min(h.get("loss_penalized", [float("inf")])))
 
             # ds_dict covers every panel in self.cv_panels (not just this fold's val_panel),
             # normalized with this fold's own training stats -- exactly what the model
@@ -332,17 +326,21 @@ class MyTuner(kt.BayesianOptimization):
             log_mem(f"trial {trial.trial_id} fold {fold_idx} END")
 
         log_mem(f"trial {trial.trial_id} END")
+        # k_sparse is fixed for the whole trial (sampled once above, same value every
+        # fold), so subtracting it once from the mean over all folds is equivalent to
+        # subtracting it fold-by-fold before averaging -- mean(x_i - c) == mean(x_i) - c.
+        mean_fitness = float(np.mean(fold_fitness))
+        objective = mean_fitness - k_sparse_penalty(k_sparse)
         # Returning a dict tells KerasTuner: "these are the metrics for this trial".
-        # mean_fitness is the search objective (see kt.Objective in run_bayesian_optimization);
-        # the loss metrics stay purely diagnostic (still plotted, no longer drive the search).
+        # "Objective" (mean_fitness minus the k_sparse penalty) is the search objective
+        # (see kt.Objective in run_bayesian_optimization); mean_fitness/mean_val_loss/
+        # mean_train_loss stay purely diagnostic (still plotted, no longer drive the search).
         return {
-            "mean_fitness":              float(np.mean(fold_fitness)),
-            "std_fitness":               float(np.std(fold_fitness)),
-            "mean_val_loss":             float(np.mean(fold_val)),
-            "mean_val_loss_penalized":   float(np.mean(fold_val_pen)),
-            "std_val_loss_penalized":    float(np.std(fold_val_pen)),
-            "mean_train_loss":           float(np.mean(fold_tr)),
-            "mean_train_loss_penalized": float(np.mean(fold_tr_pen)),
+            "Objective":        objective,
+            "mean_fitness":     mean_fitness,
+            "std_fitness":      float(np.std(fold_fitness)),
+            "mean_val_loss":    float(np.mean(fold_val)),
+            "mean_train_loss":  float(np.mean(fold_tr)),
         }
 
 
@@ -365,8 +363,8 @@ def _collect_loss_histories(tuner):
     for t in tuner.oracle.trials.values():
         if t.score is None:  # skip incomplete trials
             continue
-        val_obs     = [_scalar(o.value) for o in t.metrics.get_history("mean_val_loss_penalized")]
-        train_obs   = [_scalar(o.value) for o in t.metrics.get_history("mean_train_loss_penalized")]
+        val_obs     = [_scalar(o.value) for o in t.metrics.get_history("mean_val_loss")]
+        train_obs   = [_scalar(o.value) for o in t.metrics.get_history("mean_train_loss")]
         fitness_obs = [_scalar(o.value) for o in t.metrics.get_history("mean_fitness")]
         if val_obs and train_obs and fitness_obs:
             val_h.append(min(val_obs))
@@ -387,13 +385,9 @@ def _build_trials_dataframe(tuner):
 
         val_hist       = [_scalar(o) for o in t.metrics.get_history("mean_val_loss")]
         train_hist     = [_scalar(o) for o in t.metrics.get_history("mean_train_loss")]
-        val_pen_hist   = [_scalar(o) for o in t.metrics.get_history("mean_val_loss_penalized")]
-        train_pen_hist = [_scalar(o) for o in t.metrics.get_history("mean_train_loss_penalized")]
 
-        row["final_val_loss"]             = val_hist[-1]       if val_hist       else None
-        row["final_train_loss"]           = train_hist[-1]     if train_hist     else None
-        row["final_val_loss_penalized"]   = val_pen_hist[-1]   if val_pen_hist   else None
-        row["final_train_loss_penalized"] = train_pen_hist[-1] if train_pen_hist else None
+        row["final_val_loss"]   = val_hist[-1]   if val_hist   else None
+        row["final_train_loss"] = train_hist[-1] if train_hist else None
         row["overfit_gap"] = (
             row["final_val_loss"] - row["final_train_loss"]
             if (row["final_val_loss"] is not None
@@ -401,7 +395,7 @@ def _build_trials_dataframe(tuner):
             else None
         )
         records.append(row)
-    # objective is now mean_fitness (higher is better) -- best trials first.
+    # objective is now Objective = mean_fitness - k_sparse_penalty (higher is better) -- best trials first.
     return pd.DataFrame(records).sort_values("objective", ascending=False)
 
 
@@ -409,14 +403,12 @@ def _save_best_trial_details(best, t_elapsed, out_dir):
     with open(f"{out_dir}/best_trial_details.txt", "w") as f:
         f.write(f"Optimization time {t_elapsed}\n")
         f.write(f"Trial ID: {best.trial_id}\n")
-        f.write(f"Objective (mean_fitness): {best.score}\n")
+        f.write(f"Objective (mean_fitness - k_sparse_penalty): {best.score}\n")
         f.write(f"Hyperparameters: {best.hyperparameters.values}\n")
         f.write(f"Final fitness: {best.metrics.get_last_value('mean_fitness')}\n")
         f.write(f"Final val_loss: {best.metrics.get_last_value('mean_val_loss')}\n")
-        f.write(f"Final val_loss_penalized: {best.metrics.get_last_value('mean_val_loss_penalized')}\n")
         f.write(f"Final train_loss: {best.metrics.get_last_value('mean_train_loss')}\n")
         f.write(f"Train loss history: {best.metrics.get_history('mean_train_loss')}\n")
-        f.write(f"Train loss penalized history: {best.metrics.get_history('mean_train_loss_penalized')}\n")
 
 
 def _append_to_model_database(model_info, results_dir=MODEL_DB_DIR):
@@ -459,7 +451,7 @@ def run_bayesian_optimization(path_i, freq, model_type="fc_AE", max_trials=30, o
     t_start = pd.Timestamp.now()
     tuner = MyTuner(
         model_building_function,
-        objective=kt.Objective("mean_fitness", direction="max"),
+        objective=kt.Objective("Objective", direction="max"),
         max_trials=max_trials,
         directory=str(BO_TUNER_DIR),
         project_name="ae",
@@ -478,27 +470,30 @@ def run_bayesian_optimization(path_i, freq, model_type="fc_AE", max_trials=30, o
 
     best = tuner.oracle.get_best_trials(1)[0]
     print("Trial ID:", best.trial_id)
-    print("Objective (mean_fitness):", best.score)
+    print("Objective (mean_fitness - k_sparse_penalty):", best.score)
     print("Hyperparameters:", best.hyperparameters.values)
     print("Final val_loss:", best.metrics.get_last_value("mean_val_loss"))
-    print("Final val_loss_penalized:", best.metrics.get_last_value("mean_val_loss_penalized"))
     print("Final train loss:", best.metrics.get_last_value("mean_train_loss"))
 
     _save_best_trial_details(best, t_elapsed, out_dir)
 
     # Retrain with the best hyperparameters using the same leave-one-out cross-validation
     # loop big_train.py's __main__ runs -- one model per held-out panel in CV_PANELS, not
-    # a single fixed split. mean_fitness/mean_val_loss_penalized during search were
-    # averages over these same 4 folds, so this is what actually reflects that evaluation
-    # (a single retrain on one fixed split would be a different, unrelated model).
+    # a single fixed split. mean_fitness/mean_val_loss during search were averages over
+    # these same 4 folds, so this is what actually reflects that evaluation (a single
+    # retrain on one fixed split would be a different, unrelated model).
     best_params = best.hyperparameters.values
     seed = int(np.random.randint(0, 10000))
 
+    # Must match build_model's latent_dim resolution exactly (see CNN_FIXED_LATENT_DIM) --
+    # best_params has no "latent_dim" key at all for CNN_AE, since it's never registered
+    # as an hp for that model type.
+    latent_dim = CNN_FIXED_LATENT_DIM if model_type == "CNN_AE" else best_params["latent_dim"]
     final_params = {
         "input_size": N_FEAT,
         "n_features": N_FEAT,
-        "latent_dim": best_params["latent_dim"],
-        "k_sparse": resolve_k_sparse(best_params["k_sparse_frac"], best_params["latent_dim"]),
+        "latent_dim": latent_dim,
+        "k_sparse": resolve_k_sparse(best_params["k_sparse_frac"], latent_dim),
         "drop_rate": best_params["drop_rate"],
     }
     if model_type == "CNN_AE":
@@ -608,8 +603,8 @@ def run_bayesian_optimization(path_i, freq, model_type="fc_AE", max_trials=30, o
 # ─── Plotting (works for 1 or N models — single-mode is just N=1) ─────────────
 def _min_max_normalize(values):
     # Unlike dividing by the mean, this has no sign-flip / near-zero blow-up risk --
-    # val_h (mean_val_loss_penalized) is unbounded and can be negative or near-zero
-    # (see monotonicity_loss), which made mean-based normalization unstable.
+    # val_h (mean_val_loss) is unbounded and can be negative or near-zero (see
+    # monotonicity_loss), which made mean-based normalization unstable.
     x = np.asarray(values, dtype=float)
     lo, hi = x.min(), x.max()
     if hi <= lo:  # all trials had the same value (e.g. a single trial) -- avoid /0
@@ -716,7 +711,7 @@ MODE = "single"            # "single" or "duo"
 MODEL_TYPE = "CNN_AE"    # used only when MODE == "single"  ("fc_AE" or "CNN_AE")
 MAX_TRIALS = 30
 PATH_I = 0
-FREQ_I = 3
+FREQ_I = 2
 
 
 def main():
@@ -724,9 +719,9 @@ def main():
     plt.close("all")
     tf.keras.backend.clear_session()
 
-    folder_name = f"Multi_path_BO_fixed"
+    folder_name = f"Multi_path_BO_fixed_freq{FREQ_I}"
     
-    for PATH_I in range(3,28):
+    for PATH_I in range(0,14):
         out_dir = f"{folder_name}/Bayesian_{MODEL_TYPE}_path{PATH_I}"
         if MODE == "single":
             results = [run_bayesian_optimization(PATH_I, FREQ_I, MODEL_TYPE, max_trials=MAX_TRIALS, out_dir=out_dir, db_dir=folder_name)]

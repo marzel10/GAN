@@ -402,11 +402,17 @@ def build_CNN_AE_features(params):
 	x = tf.keras.layers.Dropout(drop_rate, name="dec_dropout")(x)
 	x = tf.keras.layers.Reshape((conv_out_h, 1, filters_path), name="reshape")(x)
 
-	x = tf.keras.layers.Conv2DTranspose(filters_path, kernel_size=[2, 1], strides=[2, 1], padding="valid",
+	x = tf.keras.layers.Conv2DTranspose(filters_path, kernel_size=[1, 1], strides=[1, 1], padding="valid",
 	                                    activation=None, kernel_initializer=he,
 	                                    kernel_regularizer=reg, name="dec_conv")(x)
 	x = tf.keras.layers.BatchNormalization(name="dec_bn2")(x)
 	x = tf.keras.layers.Activation("elu", name="dec_act2")(x)
+
+	x = tf.keras.layers.Conv2DTranspose(filters_bench, kernel_size=[2, 1], strides=[2, 1], padding="valid",
+	                                    activation=None, kernel_initializer=he,
+	                                    kernel_regularizer=reg, name="dec_conv1")(x)
+	x = tf.keras.layers.BatchNormalization(name="dec_bn3")(x)
+	x = tf.keras.layers.Activation("elu", name="dec_act3")(x)
 
 	x = tf.keras.layers.Conv2DTranspose(1, kernel_size=[1, n_channels], padding="valid",
 	                                    activation=None, kernel_initializer=he,

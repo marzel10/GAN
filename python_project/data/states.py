@@ -41,15 +41,13 @@ class states:
         data = loadmat(mat_file)
         self.file_path = mat_file
         self.states = data['States']
-        # find States_ in file name and extract the part after it until the next dot or end of string
-        begin_idx = mat_file.find("States_")
+        # find States_ in the file's stem (name without extension) and extract the part after it
+        stem = Path(mat_file).stem
+        begin_idx = stem.find("States_")
         if begin_idx == -1:
             raise ValueError(f"File name {mat_file} does not contain 'States_'")
         begin_idx += len("States_")
-        end_idx = mat_file.find(".", begin_idx)
-        if end_idx == -1:
-            end_idx = len(mat_file)
-        self.panel_name = mat_file[begin_idx:end_idx]
+        self.panel_name = stem[begin_idx:]
         self.num_states = self.states.shape[1]
 
 
@@ -187,12 +185,13 @@ class states:
 
         #square figure
         plt.figure(figsize=(6, 6))
-        plt.plot(time[100:1000], amp[100:1000], label='Amplitude')
-        plt.plot(time[100:1000], benchmark_amp[100:1000], label='Benchmark Amplitude')
+        plt.plot(time[2100:3000], amp[2100:3000], label='Amplitude')
+        plt.plot(time[2100:3000], benchmark_amp[2100:3000], label='Benchmark Amplitude')
         plt.title(f'State {s_idx}, Frequency {freq}, Pair Index {p_idx}')
         plt.xlabel('Time')
         plt.ylabel('Amplitude')
         plt.legend()
+        plt.show()
         if save_path is not None:
             plt.savefig(save_path, format='svg', bbox_inches='tight')
        
@@ -205,4 +204,4 @@ if __name__ == "__main__":
     print(f"Time step (dt): {dt}")
     print(f"Total time of the signal: {dt * 2000}")  # Assuming 2000 samples as per the original code
     panel_states.size_summary()
-    panel_states.plot(s_idx=0, freq=0, p_idx=0)
+    panel_states.plot(s_idx=27, freq=3, p_idx=15)

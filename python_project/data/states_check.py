@@ -246,6 +246,20 @@ def prepare_datastores(path_i, freq_i, base_batch_size, test_batch_size, train_d
             target_dict[ds_names[i]] = tg
             States_dict[ds_names[i]] = state_idx
 
+    # Pool the 8 "123" subpanels into one combined "123" entry, mirroring
+    # prepare_simple_dataset's own "123" handling -- lets "123" be used as a single panel
+    # name (e.g. one leave-one-out CV fold) exactly like "103"/"104"/"105"/"109" everywhere
+    # downstream (ds_dict[panel]/States_dict[panel] lookups in plotting code, fitness
+    # computation, train_ds_names/val_ds_names lists, etc). Each subpanel's state_idx is
+    # already a slice of the global 0..91 range (see starting_states above), so
+    # concatenating in PANEL_123_SUBPANELS order reproduces the full continuous range.
+    pooled_ds = ds_dict[PANEL_123_SUBPANELS[0]]
+    for name in PANEL_123_SUBPANELS[1:]:
+        pooled_ds = pooled_ds.concatenate(ds_dict[name])
+    ds_dict["123"] = pooled_ds
+    States_dict["123"] = np.concatenate([States_dict[name] for name in PANEL_123_SUBPANELS])
+    RUL_dict["123"] = np.concatenate([RUL_dict[name] for name in PANEL_123_SUBPANELS])
+    target_dict["123"] = np.concatenate([target_dict[name] for name in PANEL_123_SUBPANELS])
 
     # Concatenate datasets for training, validation, and testing
     for i, name in enumerate(train_ds_names):

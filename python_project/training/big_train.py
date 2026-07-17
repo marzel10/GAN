@@ -28,7 +28,7 @@ from ae_cross_validation_helper import (
     plot_sHI_cv_fold, plot_reconstruction_cv_fold, build_ensemble_ae, plot_ensemble_sHI,
 )
 from config import (
-    BASE_PANELS, MODEL_DATABASE_XLSX_FEATURES, VAL_123_SUBPANELS, TEST_123_SUBPANELS, DEFAULT_FREQ_INDEX,
+    BASE_PANELS, CV_PANELS, MODEL_DATABASE_XLSX_FEATURES, VAL_123_SUBPANELS, TEST_123_SUBPANELS, DEFAULT_FREQ_INDEX,
     DEFAULT_K_SPARSE, DEFAULT_N_FEATURES, MODEL_TRAIN_RESULTS_DIR, MODEL_DATABASE_XLSX,
     CROSS_VALIDATION_RESULTS_AE_DIR,
 )
@@ -499,7 +499,7 @@ if __name__ == "__main__":
     val_average_final_loss = np.zeros(len(path_indexes))
 
     for path_i, p_idx in enumerate(path_indexes):
-        path_dir = os.path.join(str(CROSS_VALIDATION_RESULTS_AE_DIR), f"path_{p_idx}")
+        path_dir = os.path.join(str(CROSS_VALIDATION_RESULTS_AE_DIR), f"path_{p_idx}_123test")
         os.makedirs(path_dir, exist_ok=True)
 
         final_loss_list = np.zeros(len(basic_panels))

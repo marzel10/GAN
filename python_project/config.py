@@ -62,6 +62,8 @@ VAL_PANELS = ["109"]                                          # Used by: BO.py (
 TEST_PANELS = PANEL_123_SUBPANELS                             # Used by: BO.py (TEST_DS_NAMES), big_train.py (test_ds_names default), results_viz.py (test_ds_names) -- all 8 "123" subpanels held out as the test set
 VAL_123_SUBPANELS = ["123_1", "123_31", "123_41", "123_43"]   # states_check.py val split (finer split: half of the 123 subpanels)
 TEST_123_SUBPANELS = ["123_2", "123_32", "123_42", "123_44"]  # states_check.py test split (finer split: the other half of the 123 subpanels)
+CV_PANELS = ["103", "104", "109", "105"]
+
 
 # Per-123-subpanel saved-state counts / global start offsets.
 # Previously byte-for-byte duplicated in weight_matrix.py and graph_dataset.py.

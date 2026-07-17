@@ -80,8 +80,8 @@ from ae_cross_validation_helper import (
 from states_check import prepare_datastores
 from prognostic_criteria import monotonicity_criterion, trendability_criterion, prognosability_criterion
 from config import (
-    K_SPARSE_PENALTY_WEIGHT, TRAIN_PANELS, VAL_PANELS, VAL_123_SUBPANELS,
-    TEST_123_SUBPANELS, BASE_PANELS, BO_RESULTS_DIR, BO_TUNER_DIR, BO_SEARCH_RESULTS_DIR,
+    K_SPARSE_PENALTY_WEIGHT, TRAIN_PANELS, VAL_PANELS, CV_PANELS,
+    BO_RESULTS_DIR, BO_TUNER_DIR, BO_SEARCH_RESULTS_DIR,
     DEFAULT_N_FEATURES,
 )
 
@@ -110,9 +110,10 @@ N_FEAT = DEFAULT_N_FEATURES
 # Train / val / test split — these can be used if you don't want to do cross-validation
 TRAIN_DS_NAMES = TRAIN_PANELS
 VAL_DS_NAMES = VAL_PANELS
-TEST_DS_NAMES = VAL_123_SUBPANELS + TEST_123_SUBPANELS
+TEST_DS_NAMES = ["123"]   # held-out test panel (not part of the leave-one-out CV folds)
 
-CV_PANELS = BASE_PANELS   # leave-one-out folds
+# leave-one-out folds -- "123" is the 8 subpanels pooled into one continuous-state panel
+# by states_check.prepare_datastores, so it behaves like any other single panel name here.
 EPOCHS_PER_FOLD = 50
 
 # CNN_AE's latent_dim is fixed (not tuned) -- used by build_model, MyTuner.run_trial (for
@@ -723,7 +724,7 @@ def main():
 
     folder_name = f"Multi_path_BO_fixed_freq{FREQ_I}"
     
-    for PATH_I in range(0,14):
+    for PATH_I in range(5,14):
         out_dir = f"{folder_name}/Bayesian_{MODEL_TYPE}_path{PATH_I}"
         if MODE == "single":
             results = [run_bayesian_optimization(PATH_I, FREQ_I, MODEL_TYPE, max_trials=MAX_TRIALS, out_dir=out_dir, db_dir=folder_name)]

@@ -48,6 +48,16 @@ def node_positions():
         pos[k] = (p1 + p2) / 2
     return pos
 
+def find_path_index(sensor_1,sensor_2):
+    """
+    Given two sensor indices (1-indexed), return the corresponding path index (0-indexed).
+    If the sensor pair does not correspond to a valid path, return None.
+    """
+    for idx, (s1, s2) in enumerate(SENSOR_PAIRS):
+        print(s1,s2)
+        if (s1 == sensor_1 and s2 == sensor_2) or (s1 == sensor_2 and s2 == sensor_1):
+            return idx
+    return None
 
 def visualize(show_path_lines=True):
     G, is_crossing = build_crossing_graph()
@@ -373,6 +383,75 @@ def visualize_path(path_number):
     plt.show()
 
 
+def _draw_two_paths_panel(ax, path_a, path_b, is_crossing, p1_a, p2_a, p1_b, p2_b):
+    """Draw the panel view highlighting two specific paths onto ax."""
+    ax.add_patch(mpatches.Rectangle((0, 0), PANEL_W, PANEL_H,
+                                    linewidth=1.5, edgecolor="black",
+                                    facecolor="whitesmoke", zorder=0))
+    for sa, sb in SENSOR_PAIRS:
+        pa, pb = SENSOR_POSITIONS[sa - 1], SENSOR_POSITIONS[sb - 1]
+        ax.plot([pa[0], pb[0]], [pa[1], pb[1]],
+                color="lightgray", linewidth=0.8, zorder=1)
+
+    ax.plot([p1_a[0], p2_a[0]], [p1_a[1], p2_a[1]],
+            color="steelblue", linewidth=2.5, zorder=3)
+    mx_a, my_a = (p1_a + p2_a) / 2
+    ax.text(mx_a, my_a + 0.005, str(path_a),
+            ha="center", va="bottom", fontsize=8,
+            fontweight="bold", color="steelblue", zorder=6)
+
+    ax.plot([p1_b[0], p2_b[0]], [p1_b[1], p2_b[1]],
+            color="darkorange", linewidth=2.5, zorder=3)
+    mx_b, my_b = (p1_b + p2_b) / 2
+    ax.text(mx_b, my_b + 0.005, str(path_b),
+            ha="center", va="bottom", fontsize=8,
+            fontweight="bold", color="darkorange", zorder=6)
+
+    ax.scatter(SENSOR_POSITIONS[:, 0], SENSOR_POSITIONS[:, 1],
+               s=60, color="black", zorder=4)
+    for i, (x, y) in enumerate(SENSOR_POSITIONS, start=1):
+        ax.text(x, y + 0.006, f"S{i}", ha="center", va="bottom",
+                fontsize=7, color="black", zorder=7)
+
+    margin = 0.001
+    ax.set_xlim(-margin, PANEL_W + margin)
+    ax.set_ylim(-margin, PANEL_H + margin)
+    ax.set_aspect("equal")
+    ax.invert_xaxis()
+    ax.set_xlabel("x (m)")
+    ax.set_ylabel("y (m)")
+    ax.set_title(f"Paths {path_a} & {path_b} "
+                 f"({'cross' if is_crossing else 'do not cross'})")
+    ax.plot([], [], color="steelblue", linewidth=2.5, label=f"Path {path_a}")
+    ax.plot([], [], color="darkorange", linewidth=2.5, label=f"Path {path_b}")
+    ax.plot([], [], color="lightgray", linewidth=0.8, label="Other paths")
+    ax.legend(loc="upper right", fontsize=9)
+
+
+def visualize_two_paths(path_a, path_b):
+    """
+    Highlights two specific paths on the panel and reports whether they cross
+    (via the same IS_CROSSING matrix / eps threshold used in weight_matrix.adjencency_matrix).
+
+    path_a, path_b : 1-indexed (1-28).
+    """
+    _, is_crossing_matrix = build_crossing_graph()
+    idx_a, idx_b = path_a - 1, path_b - 1
+    s1_a, s2_a = SENSOR_PAIRS[idx_a]
+    s1_b, s2_b = SENSOR_PAIRS[idx_b]
+    p1_a, p2_a = SENSOR_POSITIONS[s1_a - 1], SENSOR_POSITIONS[s2_a - 1]
+    p1_b, p2_b = SENSOR_POSITIONS[s1_b - 1], SENSOR_POSITIONS[s2_b - 1]
+
+    eps = 10e-6
+    crossing = bool(is_crossing_matrix[idx_a, idx_b] > eps)
+
+    fig, ax = plt.subplots(figsize=(7, 9))
+    _draw_two_paths_panel(ax, path_a, path_b, crossing, p1_a, p2_a, p1_b, p2_b)
+    fig.tight_layout()
+    plt.show()
+    return crossing
+
+
 def plot_panel_schematic(impact_points=None, ax=None, title="Panel schematic",
                          show_dims=True, save_path=None):
     """
@@ -495,8 +574,23 @@ def plot_panel_schematic(impact_points=None, ax=None, title="Panel schematic",
 
 
 if __name__ == "__main__":
+   
+    c = find_crossings()
+    # find 10 the largest values in the crossing and their indecies
+    top = np.unravel_index(np.argsort(c, axis=None)[-10:], c.shape)
+    print(top[0])
+    for i in range(len(top[0])):
+        s1 = top[0][i]+1
+        s2 = top[1][i]+1
+        visualize_two_paths(s1,s2)
+    visualize_two_paths(0,27)
+    print(np.argmax(c)//28,np.mod(np.argmax(c),28))
+    print(find_path_index(8,1))
+    visualize_path(1)
+    visualize_path(7)
+    visualize_path(6)
     visualize()
-    visualize_path(2)
+    
 
     # Example: weighted adjacency graph for one state/frequency of panel 123
     from states import states

@@ -382,7 +382,7 @@ def build_CNN_AE_features(params):
 	                          kernel_regularizer=reg, name="enc_dense")(x)
 	x = tf.keras.layers.BatchNormalization(name="lat_bn")(x)
 	x = tf.keras.layers.Activation("elu", name="lat_act")(x)
-	x = tf.keras.layers.Dropout(drop_rate, name="lat_dropout")(x)
+	#x = tf.keras.layers.Dropout(drop_rate, name="lat_dropout")(x)
 	z = KSparse(k_sparse, name="latent_space")(x)                # (batch, latent_dim)
 
 	# ── sHI head ─────────────────────────────────────────────────────────

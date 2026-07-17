@@ -100,7 +100,7 @@ HP_COLS = {
     ],
     # CNN AE has the following HP
     "CNN_AE": [
-        "k_sparse_frac", "filters_bench", "filters_path",  "drop_rate", "batch_size"
+        "k_sparse_frac", "filters_bench", "filters_path",  "batch_size"
     ],
 }
 
@@ -113,7 +113,7 @@ VAL_DS_NAMES = VAL_PANELS
 TEST_DS_NAMES = VAL_123_SUBPANELS + TEST_123_SUBPANELS
 
 CV_PANELS = BASE_PANELS   # leave-one-out folds
-EPOCHS_PER_FOLD = 100
+EPOCHS_PER_FOLD = 50
 
 # CNN_AE's latent_dim is fixed (not tuned) -- used by build_model, MyTuner.run_trial (for
 # the k_sparse penalty computation), and the final retrain's final_params, so all three
@@ -165,7 +165,7 @@ def build_model(hp, model_type="fc_AE"):
     # latent_dim is tuned for fc_AE but fixed for CNN_AE (see CNN_FIXED_LATENT_DIM).
     latent_dim = CNN_FIXED_LATENT_DIM if model_type == "CNN_AE" else get_latent_dim_hp(hp)
     k_sparse = resolve_k_sparse(get_k_sparse_frac_hp(hp), latent_dim)
-    drop_rate = get_drop_rate_hp(hp)
+    drop_rate = get_drop_rate_hp(hp) if model_type == "fc_AE" else None
 
     if model_type == "fc_AE":
         params = {
@@ -185,9 +185,8 @@ def build_model(hp, model_type="fc_AE"):
             "n_channels": 2,
             "latent_dim": latent_dim,
             "k_sparse": k_sparse,
-            "drop_rate": drop_rate,
-            "filters_bench": hp.Int("filters_bench", min_value=2, max_value=8, step=2),
-            "filters_path": hp.Int("filters_path", min_value=2, max_value=12, step=2),
+            "filters_bench": hp.Int("filters_bench", min_value=6, max_value=20, step=2),
+            "filters_path": hp.Int("filters_path", min_value=4, max_value=12, step=2),
         }
         model = build_CNN_AE_features(params)
     else:
@@ -494,8 +493,11 @@ def run_bayesian_optimization(path_i, freq, model_type="fc_AE", max_trials=30, o
         "n_features": N_FEAT,
         "latent_dim": latent_dim,
         "k_sparse": resolve_k_sparse(best_params["k_sparse_frac"], latent_dim),
-        "drop_rate": best_params["drop_rate"],
     }
+    if model_type == "fc_AE":
+        # drop_rate is only tuned (and only registered as an hp) for fc_AE -- best_params
+        # has no "drop_rate" key at all for CNN_AE (see build_model / HP_COLS).
+        final_params["drop_rate"] = best_params["drop_rate"]
     if model_type == "CNN_AE":
         final_params["filters_bench"] = best_params["filters_bench"]
         final_params["filters_path"] = best_params["filters_path"]
@@ -662,7 +664,7 @@ def plot_hp_sensitivity(result, save_path):
     """Per-model HP scatter (HP cols differ per model, so this is single-model)."""
     df = result["df"]
     cols = HP_COLS[result["model_type"]]
-    fig, axes = plt.subplots(2, 4, figsize=(20, 8), squeeze=False)
+    fig, axes = plt.subplots(1, 4, figsize=(20, 8), squeeze=False)
     for ax, col in zip(axes.flat, cols):
         ax.scatter(df[col], df["objective"], alpha=0.6,
                    edgecolors="k", linewidths=0.3)
@@ -678,7 +680,7 @@ def plot_hp_sensitivity(result, save_path):
 def plot_hp_coverage(result, save_path):
     df = result["df"]
     cols = HP_COLS[result["model_type"]]
-    fig, axes = plt.subplots(2, 4, figsize=(20, 8), squeeze=False)
+    fig, axes = plt.subplots(1, 4, figsize=(20, 8), squeeze=False)
     for ax, col in zip(axes.flat, cols):
         ax.hist(df[col].dropna(), bins=10, edgecolor="k")
         ax.set_title(col)

@@ -50,7 +50,8 @@ def attention_matrix(States: states, state_idx: (int or str), freq_idx: int) -> 
         for j in range(num_paths):
             amp_j = States.amplitude(state_idx, freq_idx, j)
             energy_j = States.signal_energy(state_idx, freq_idx, j)
-            if energy_i == 0 or energy_j == 0:
+        
+            if np.any(energy_i == 0) or np.any(energy_j == 0):
                 print(f"Warning: Zero energy for state {state_idx}, frequency {freq_idx}, paths {i} or {j}. Check if the amplitude values are correct.")
                 
             
@@ -248,7 +249,7 @@ if __name__ == "__main__":
 
     fig2, (ax_c, ax_a) = plt.subplots(1, 2, figsize=(14, 6))
 
-    im_c = ax_c.imshow(crossing, cmap=CMAP_BLUES, vmin=0, vmax=1)
+    im_c = ax_c.imshow(crossing, cmap=CMAP_BLUES)
     fig2.colorbar(im_c, ax=ax_c, label="Crosses (0/1)", ticks=[0, 1], shrink=0.8)
     ax_c.set_title("Path Crossing Matrix")
     ax_c.set_xlabel("Path Index")
@@ -271,3 +272,6 @@ if __name__ == "__main__":
 
     fig2.tight_layout()
     plt.show()
+
+
+    

@@ -44,6 +44,7 @@ At the end train and validation datasets are assumed and latent representations 
 """
 
 import gc
+import multiprocessing
 import os
 import sys
 from functools import partial
@@ -717,36 +718,44 @@ PATH_I = 0
 FREQ_I = 5
 
 
+def _run_one_path(path_i, freq_i, mode, model_type, max_trials, folder_name):
+    """Runs one path's full BO search (all trials/folds) + retrain + plots.
+
+    Meant to be launched as its own OS process (see main()) -- clear_session()/
+    gc.collect() reset Keras's layer-naming registry and drop Python references, but
+    they don't touch TensorFlow's growing tf.function/autograph trace cache or (on GPU)
+    CUDA allocator fragmentation from building/discarding ~500 models sequentially
+    across a multi-path run. Only exiting the process fully reclaims that, which is why
+    per-path time crept up when this all ran in one long-lived process.
+    """
+    out_dir = f"{folder_name}/Bayesian_{model_type}_path{path_i}"
+    if mode == "single":
+        results = [run_bayesian_optimization(path_i, freq_i, model_type, max_trials=max_trials, out_dir=out_dir, db_dir=folder_name)]
+    elif mode == "duo":
+        results = [
+            run_bayesian_optimization(path_i, freq_i, "fc_AE",  max_trials=max_trials, out_dir=out_dir, db_dir=folder_name),
+            run_bayesian_optimization(path_i, freq_i, "CNN_AE", max_trials=max_trials, out_dir=out_dir, db_dir=folder_name),
+        ]
+    else:
+        raise ValueError(f"Unknown MODE: {mode!r}. Use 'single' or 'duo'.")
+
+    plot_all(results)
+
+
 def main():
-    # cleanup from any previous runs (in case we're running multiple times in a row)
-    plt.close("all")
-    tf.keras.backend.clear_session()
-
     folder_name = f"Multi_path_BO_fixed_freq{FREQ_I}"
-    
-    for PATH_I in range(15,28):
-        out_dir = f"{folder_name}/Bayesian_{MODEL_TYPE}_path{PATH_I}"
-        if MODE == "single":
-            results = [run_bayesian_optimization(PATH_I, FREQ_I, MODEL_TYPE, max_trials=MAX_TRIALS, out_dir=out_dir, db_dir=folder_name)]
-        elif MODE == "duo":
-            results = [
-                run_bayesian_optimization(PATH_I, FREQ_I, "fc_AE",  max_trials=MAX_TRIALS, out_dir=out_dir, db_dir=folder_name),
-                run_bayesian_optimization(PATH_I, FREQ_I, "CNN_AE", max_trials=MAX_TRIALS, out_dir=out_dir, db_dir=folder_name),
-            ]
-        else:
-            raise ValueError(f"Unknown MODE: {MODE!r}. Use 'single' or 'duo'.")
+    # spawn (not fork) so each path starts a genuinely fresh interpreter/TF/CUDA state --
+    # spawn is also the only start method Windows supports, so this is explicit either way.
+    ctx = multiprocessing.get_context("spawn")
 
-        plot_all(results)
-        # fold/ensemble training + plotting already happened inside run_bayesian_optimization
-
-    #plt.show()
-
-        # ── cleanup before next path ─────────────────────
-        plt.close("all")           # release matplotlib figures
-        del results                # drop refs to model, ds_dict, df, etc.
-        tf.keras.backend.clear_session()
-        gc.collect()
-        log_mem(f"after path {PATH_I} cleanup")  # verify it actually drops
+    for PATH_I in range(24, 25):
+        log_mem(f"before path {PATH_I} (parent)")
+        p = ctx.Process(target=_run_one_path, args=(PATH_I, FREQ_I, MODE, MODEL_TYPE, MAX_TRIALS, folder_name))
+        p.start()
+        p.join()
+        if p.exitcode != 0:
+            raise RuntimeError(f"Subprocess for path {PATH_I} failed with exit code {p.exitcode}")
+        log_mem(f"after path {PATH_I} cleanup (parent)")  # should stay flat -- work happened in the child
 
 
 if __name__ == "__main__":

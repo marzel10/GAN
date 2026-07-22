@@ -22,15 +22,16 @@ if str(_PROJECT_ROOT) not in sys.path:
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+from matplotlib.colors import LinearSegmentedColormap
 import networkx as nx
 
-from weight_matrix import find_crossings, adjencency_matrix
+from weight_matrix import find_crossings, adjencency_matrix, find_crossings_by_area
 from plot_panel import SENSOR_POSITIONS, SENSOR_PAIRS, PANEL_W, PANEL_H, DAMAGE_POINTS
 from config import mat_file_path, DEFAULT_FREQ_INDEX, CMAP_SEQUENTIAL, CMAP_BLUES
 
 
 def build_crossing_graph():
-    is_crossing = find_crossings()
+    is_crossing = find_crossings_by_area()
     G = nx.Graph()
     G.add_nodes_from(range(28))
     rows, cols = np.nonzero(np.triu(is_crossing))
@@ -54,7 +55,6 @@ def find_path_index(sensor_1,sensor_2):
     If the sensor pair does not correspond to a valid path, return None.
     """
     for idx, (s1, s2) in enumerate(SENSOR_PAIRS):
-        print(s1,s2)
         if (s1 == sensor_1 and s2 == sensor_2) or (s1 == sensor_2 and s2 == sensor_1):
             return idx
     return None
@@ -143,6 +143,108 @@ def visualize(show_path_lines=True):
     plt.show()
 
 
+def _draw_node_subgraph_panel(ax, subG, node_idx, pos):
+    """Draw the induced subgraph on the panel (physical layout) onto ax."""
+    _draw_panel_background(ax)
+
+    for i, j in subG.edges():
+        xi, yi = pos[i]
+        xj, yj = pos[j]
+        ax.plot([xi, xj], [yi, yj], color="tomato", linewidth=1.5, alpha=0.8, zorder=2)
+
+    node_x = [pos[k][0] for k in node_idx]
+    node_y = [pos[k][1] for k in node_idx]
+    ax.scatter(node_x, node_y, s=70, color="darkorange",
+               edgecolors="black", linewidths=0.6, zorder=3)
+    for k in node_idx:
+        ax.text(pos[k][0], pos[k][1] + 0.005, str(k + 1),
+                ha="center", va="bottom", fontsize=8, fontweight="bold",
+                color="black", zorder=6)
+
+    margin = 0.001
+    ax.set_xlim(-margin, PANEL_W + margin)
+    ax.set_ylim(-margin, PANEL_H + margin)
+    ax.set_aspect("equal")
+    ax.invert_xaxis()
+    ax.set_xlabel("x (m)")
+    ax.set_ylabel("y (m)")
+    ax.set_title("On panel (physical layout)")
+    ax.scatter([], [], s=70, color="darkorange", edgecolors="black",
+               linewidths=0.6, label="Selected path")
+    ax.plot([], [], color="tomato", linewidth=1.5, label="Crossing edge")
+    ax.plot([], [], color="lightgray", linewidth=0.8, label="Other paths")
+    ax.legend(loc="upper right", fontsize=8)
+
+
+def _draw_node_subgraph_abstract(ax, subG):
+    """Draw the induced subgraph with an abstract (non-spatial) layout onto ax --
+    unlike the panel view, every node gets a distinct position here even when several
+    paths share the same physical midpoint on the panel."""
+    layout = nx.circular_layout(subG)
+    labels = {n: str(n + 1) for n in subG.nodes()}
+
+    nx.draw_networkx_edges(subG, layout, ax=ax, edge_color="tomato", width=1.5, alpha=0.8)
+    nx.draw_networkx_nodes(subG, layout, ax=ax, node_color="darkorange",
+                           node_size=500, edgecolors="black", linewidths=0.8)
+    nx.draw_networkx_labels(subG, layout, labels=labels, ax=ax,
+                            font_size=9, font_color="black", font_weight="bold")
+    ax.set_aspect("equal")
+    ax.axis("off")
+    ax.set_title("Abstract layout (no coinciding nodes)")
+
+
+
+def visualize_node_subgraph_abstract(nodes):
+    """
+    Abstract-only layout (no panel view) of the subgraph induced by `nodes` -- edges
+    colored by their actual is_crossing strength (darker = stronger crossing), so
+    connectivity AND relative crossing strength both read at a glance.
+
+    nodes : list of path numbers, 1-indexed (1-28).
+    """
+    G, is_crossing_matrix = build_crossing_graph()
+    node_idx = [n - 1 for n in nodes]
+    subG = G.subgraph(node_idx)
+
+    layout = nx.circular_layout(subG)
+    labels = {n: str(n + 1) for n in subG.nodes()}
+
+    weights = [is_crossing_matrix[i, j] for i, j in subG.edges()]
+    for i, j in subG.edges():
+        print(f"Connection between nodes {i + 1} and {j + 1}: {is_crossing_matrix[i, j]}")
+    input("Press Enter to continue...")
+    # CMAP_BLUES fades to near-white at its low end, which disappears against the white
+    # figure background -- truncate it to [0.35, 1.0] so even the weakest edge stays
+    # visibly blue. Both edges and the colorbar use this same truncated cmap, so they
+    # stay consistent with each other.
+    base_cmap = plt.get_cmap(CMAP_BLUES)
+    cmap = LinearSegmentedColormap.from_list(
+        "blues_visible", base_cmap(np.linspace(0.35, 1.0, 256))
+    )
+    wmin = min(weights) if weights else 0.0
+    wmax = max(weights) if weights else 1.0
+    norm = plt.Normalize(vmin=wmin, vmax=wmax if wmax > wmin else wmin + 1e-9)
+    edge_colors = [cmap(norm(w)) for w in weights]
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    nx.draw_networkx_edges(subG, layout, ax=ax, edge_color=edge_colors, width=2.2)
+    nx.draw_networkx_nodes(subG, layout, ax=ax, node_color="darkorange",
+                           node_size=550, edgecolors="black", linewidths=0.8)
+    nx.draw_networkx_labels(subG, layout, labels=labels, ax=ax,
+                            font_size=9, font_color="black", font_weight="bold")
+
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    fig.colorbar(sm, ax=ax, label="Crossing strength (is_crossing)", shrink=0.8)
+
+    ax.set_aspect("equal")
+    ax.axis("off")
+    #ax.set_title(f"Subgraph induced by nodes {nodes} ")
+    fig.tight_layout()
+    plt.show()
+    return subG
+
+
 def build_adjacency_graph(States, state_idx, freq_idx):
     """Weighted crossing graph for one state/frequency: edges only between
     crossing paths, weighted by adjencency_matrix (attention + crossing)."""
@@ -160,7 +262,8 @@ def build_adjacency_graph(States, state_idx, freq_idx):
     return G, adjacency
 
 
-def visualize_adjacency(States, state_idx, freq_idx, show_path_lines=True):
+
+def visualize_adjacency(States, state_idx, freq_idx, show_path_lines=True, plain=False):
     """
     Visualizes the weighted adjacency graph from weight_matrix.adjencency_matrix:
       left  = graph drawn on the panel, edges colored/thickened by weight
@@ -172,91 +275,96 @@ def visualize_adjacency(States, state_idx, freq_idx, show_path_lines=True):
     G, adjacency = build_adjacency_graph(States, state_idx, freq_idx)
     pos = node_positions()
 
-    fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+    if not plain:
+        fig, axes = plt.subplots(1, 2, figsize=(16, 7))
 
-    # --- left: weighted graph drawn on the panel ---
-    ax = axes[0]
-    rect = mpatches.Rectangle((0, 0), PANEL_W, PANEL_H,
-                               linewidth=1.5, edgecolor="black",
-                               facecolor="whitesmoke", zorder=0)
-    ax.add_patch(rect)
+        # --- left: weighted graph drawn on the panel ---
+        ax = axes[0]
+        rect = mpatches.Rectangle((0, 0), PANEL_W, PANEL_H,
+                                linewidth=1.5, edgecolor="black",
+                                facecolor="whitesmoke", zorder=0)
+        ax.add_patch(rect)
 
-    # sensor positions
-    ax.scatter(SENSOR_POSITIONS[:, 0], SENSOR_POSITIONS[:, 1],
-               s=80, color="steelblue", zorder=4)
-    for i, (x, y) in enumerate(SENSOR_POSITIONS, start=1):
-        ax.text(x, y + 0.006, f"S{i}", ha="center", va="bottom",
-                fontsize=8, color="steelblue", zorder=5)
+        # sensor positions
+        ax.scatter(SENSOR_POSITIONS[:, 0], SENSOR_POSITIONS[:, 1],
+                s=80, color="steelblue", zorder=4)
+        for i, (x, y) in enumerate(SENSOR_POSITIONS, start=1):
+            ax.text(x, y + 0.006, f"S{i}", ha="center", va="bottom",
+                    fontsize=8, color="steelblue", zorder=5)
 
-    # faint path lines for context
-    if show_path_lines:
-        for s1, s2 in SENSOR_PAIRS:
-            p1, p2 = SENSOR_POSITIONS[s1 - 1], SENSOR_POSITIONS[s2 - 1]
-            ax.plot([p1[0], p2[0]], [p1[1], p2[1]],
-                    color="lightgray", linewidth=0.8, zorder=1)
+        # faint path lines for context
+        if show_path_lines:
+            for s1, s2 in SENSOR_PAIRS:
+                p1, p2 = SENSOR_POSITIONS[s1 - 1], SENSOR_POSITIONS[s2 - 1]
+                ax.plot([p1[0], p2[0]], [p1[1], p2[1]],
+                        color="lightgray", linewidth=0.8, zorder=1)
 
-    # weighted edges (color + thickness scale with adjacency weight)
-    weights = [G[i][j]["weight"] for i, j in G.edges()]
-    cmap = plt.get_cmap("plasma")
-    wmin = min(weights) if weights else 0.0
-    wmax = max(weights) if weights else 1.0
-    norm = plt.Normalize(vmin=wmin, vmax=wmax if wmax > wmin else wmin + 1e-9)
+        # weighted edges (color + thickness scale with adjacency weight)
+        weights = [G[i][j]["weight"] for i, j in G.edges()]
+        cmap = plt.get_cmap("plasma")
+        wmin = min(weights) if weights else 0.0
+        wmax = max(weights) if weights else 1.0
+        norm = plt.Normalize(vmin=wmin, vmax=wmax if wmax > wmin else wmin + 1e-9)
 
-    for i, j in G.edges():
-        w = G[i][j]["weight"]
-        xi, yi = pos[i]
-        xj, yj = pos[j]
-        ax.plot([xi, xj], [yi, yj], color=cmap(norm(w)),
-                linewidth=0.8 + 2.5 * norm(w), alpha=0.8, zorder=2)
+        for i, j in G.edges():
+            w = G[i][j]["weight"]
+            xi, yi = pos[i]
+            xj, yj = pos[j]
+            ax.plot([xi, xj], [yi, yj], color=cmap(norm(w)),
+                    linewidth=0.8 + 2.5 * norm(w), alpha=0.8, zorder=2)
 
-    # nodes (path midpoints)
-    node_x = [pos[k][0] for k in range(28)]
-    node_y = [pos[k][1] for k in range(28)]
-    ax.scatter(node_x, node_y, s=60, color="darkorange",
-               edgecolors="black", linewidths=0.5, zorder=3)
-    for k in range(28):
-        ax.text(pos[k][0], pos[k][1] + 0.005, str(k + 1),
-                ha="center", va="bottom", fontsize=6, color="black", zorder=6)
+        # nodes (path midpoints)
+        node_x = [pos[k][0] for k in range(28)]
+        node_y = [pos[k][1] for k in range(28)]
+        ax.scatter(node_x, node_y, s=60, color="darkorange",
+                edgecolors="black", linewidths=0.5, zorder=3)
+        for k in range(28):
+            ax.text(pos[k][0], pos[k][1] + 0.005, str(k + 1),
+                    ha="center", va="bottom", fontsize=6, color="black", zorder=6)
 
-    margin = 0.01
-    ax.set_xlim(-margin, PANEL_W + margin)
-    ax.set_ylim(-margin, PANEL_H + margin)
-    ax.set_aspect("equal")
-    ax.invert_xaxis()
-    ax.set_xlabel("x (m)")
-    ax.set_ylabel("y (m)")
-    ax.set_title(
-        f"Adjacency graph on panel (state {state_idx}, freq {freq_idx})\n"
-        f"{G.number_of_nodes()} nodes · {G.number_of_edges()} edges"
-    )
+        margin = 0.01
+        ax.set_xlim(-margin, PANEL_W + margin)
+        ax.set_ylim(-margin, PANEL_H + margin)
+        ax.set_aspect("equal")
+        ax.invert_xaxis()
+        ax.set_xlabel("x (m)")
+        ax.set_ylabel("y (m)")
+        ax.set_title(
+            f"Adjacency graph on panel (state {state_idx}, freq {freq_idx})\n"
+            f"{G.number_of_nodes()} nodes · {G.number_of_edges()} edges"
+        )
 
-    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-    sm.set_array([])
-    fig.colorbar(sm, ax=ax, label="Edge weight (attention + crossing)", shrink=0.8)
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+        sm.set_array([])
+        fig.colorbar(sm, ax=ax, label="Edge weight (attention + crossing)", shrink=0.8)
 
-    # legend
-    ax.scatter([], [], s=60, color="darkorange", edgecolors="black",
-               linewidths=0.5, label="Path node (midpoint)")
-    ax.plot([], [], color="lightgray", linewidth=0.8, label="Sensor path")
-    ax.legend(loc="upper right", fontsize=8)
+        # legend
+        ax.scatter([], [], s=60, color="darkorange", edgecolors="black",
+                linewidths=0.5, label="Path node (midpoint)")
+        ax.plot([], [], color="lightgray", linewidth=0.8, label="Sensor path")
+        ax.legend(loc="upper right", fontsize=8)
 
-    # --- right: adjacency matrix as a heatmap ---
-    ax2 = axes[1]
-    im = ax2.imshow(adjacency, cmap=CMAP_SEQUENTIAL)
-    fig.colorbar(im, ax=ax2, label="Adjacency weight", shrink=0.8)
-    tick_labels = [str(i + 1) for i in range(28)]
-    ax2.set_xticks(range(28))
-    ax2.set_xticklabels(tick_labels, rotation=90, fontsize=7)
-    ax2.set_yticks(range(28))
-    ax2.set_yticklabels(tick_labels, fontsize=7)
-    ax2.set_xlabel("Path index")
-    ax2.set_ylabel("Path index")
-    ax2.set_title("Adjacency matrix")
+        # --- right: adjacency matrix as a heatmap ---
+        ax2 = axes[1]
+        im = ax2.imshow(adjacency, cmap=CMAP_SEQUENTIAL)
+        fig.colorbar(im, ax=ax2, label="Adjacency weight", shrink=0.8)
+        tick_labels = [str(i + 1) for i in range(28)]
+        ax2.set_xticks(range(28))
+        ax2.set_xticklabels(tick_labels, rotation=90, fontsize=7)
+        ax2.set_yticks(range(28))
+        ax2.set_yticklabels(tick_labels, fontsize=7)
+        ax2.set_xlabel("Path index")
+        ax2.set_ylabel("Path index")
+        ax2.set_title("Adjacency matrix")
 
-    print(f"Nodes: {G.number_of_nodes()}")
-    print(f"Edges: {G.number_of_edges()}")
-    if G.number_of_edges():
-        print(f"Weight range: {wmin:.4f} to {wmax:.4f}")
+        print(f"Nodes: {G.number_of_nodes()}")
+        print(f"Edges: {G.number_of_edges()}")
+        if G.number_of_edges():
+            print(f"Weight range: {wmin:.4f} to {wmax:.4f}")
+    else:
+        fig, ax = plt.subplots(figsize=(8, 8))
+        im = ax.imshow(adjacency, cmap=CMAP_SEQUENTIAL)
+        
 
     fig.tight_layout()
     plt.show()
@@ -428,28 +536,88 @@ def _draw_two_paths_panel(ax, path_a, path_b, is_crossing, p1_a, p2_a, p1_b, p2_
     ax.legend(loc="upper right", fontsize=9)
 
 
-def visualize_two_paths(path_a, path_b):
-    """
-    Highlights two specific paths on the panel and reports whether they cross
-    (via the same IS_CROSSING matrix / eps threshold used in weight_matrix.adjencency_matrix).
+def _draw_panel_background(ax):
+    """Draw the empty panel (border + faint path lines + sensor markers) onto ax."""
+    ax.add_patch(mpatches.Rectangle((0, 0), PANEL_W, PANEL_H,
+                                    linewidth=1.5, edgecolor="black",
+                                    facecolor="whitesmoke", zorder=0))
+    for sa, sb in SENSOR_PAIRS:
+        pa, pb = SENSOR_POSITIONS[sa - 1], SENSOR_POSITIONS[sb - 1]
+        ax.plot([pa[0], pb[0]], [pa[1], pb[1]],
+                color="lightgray", linewidth=0.8, zorder=1)
+    ax.scatter(SENSOR_POSITIONS[:, 0], SENSOR_POSITIONS[:, 1],
+               s=60, color="black", zorder=4)
+    for i, (x, y) in enumerate(SENSOR_POSITIONS, start=1):
+        ax.text(x, y + 0.006, f"S{i}", ha="center", va="bottom",
+                fontsize=7, color="black", zorder=7)
 
-    path_a, path_b : 1-indexed (1-28).
+
+def _highlight_path_pair(ax, path_a, path_b, color):
+    """Draw both paths of one pair in a shared color onto ax (no background)."""
+    label_offset = 0.006
+    for p in (path_a, path_b):
+        s1, s2 = SENSOR_PAIRS[p - 1]
+        p1, p2 = SENSOR_POSITIONS[s1 - 1], SENSOR_POSITIONS[s2 - 1]
+        ax.plot([p1[0], p2[0]], [p1[1], p2[1]], color=color, linewidth=2.5, zorder=3)
+        mid = (p1 + p2) / 2
+
+        # Offset the label perpendicular to the path's own direction, not just
+        # vertically -- a fixed "+y" offset lands right on top of steep/vertical
+        # paths since it points along the line instead of away from it.
+        direction = p2 - p1
+        norm = np.linalg.norm(direction)
+        perp = np.array([-direction[1], direction[0]]) / norm if norm > 0 else np.array([0.0, 1.0])
+        if perp[1] < 0:  # keep labels biased toward the top, for consistency
+            perp = -perp
+        label_pos = mid + perp * label_offset
+
+        ax.text(label_pos[0], label_pos[1], str(p), ha="center", va="center",
+                fontsize=12, fontweight="bold", color=color, zorder=6)
+
+
+def visualize_paths_pairs(path_pairs):
+    """
+    Highlights several path pairs on one shared panel plot -- each pair drawn in its
+    own color (both paths of a pair share that color), so pairs are visually distinct.
+
+    path_pairs : list of (path_a, path_b), 1-indexed (1-28).
     """
     _, is_crossing_matrix = build_crossing_graph()
-    idx_a, idx_b = path_a - 1, path_b - 1
-    s1_a, s2_a = SENSOR_PAIRS[idx_a]
-    s1_b, s2_b = SENSOR_PAIRS[idx_b]
-    p1_a, p2_a = SENSOR_POSITIONS[s1_a - 1], SENSOR_POSITIONS[s2_a - 1]
-    p1_b, p2_b = SENSOR_POSITIONS[s1_b - 1], SENSOR_POSITIONS[s2_b - 1]
-
-    eps = 10e-6
-    crossing = bool(is_crossing_matrix[idx_a, idx_b] > eps)
 
     fig, ax = plt.subplots(figsize=(7, 9))
-    _draw_two_paths_panel(ax, path_a, path_b, crossing, p1_a, p2_a, p1_b, p2_b)
+    _draw_panel_background(ax)
+
+    # Custom palette: dark teal -> orange -> light blue, interpolated so it scales to
+    # any number of pairs while staying anchored on these three exact colors.
+    palette_rgb = [(21, 96, 130), (233, 113, 50), (166, 202, 236)]
+    palette = [(r / 255, g / 255, b / 255) for r, g, b in palette_rgb]
+    cmap = LinearSegmentedColormap.from_list("panel_pairs", palette, N=max(len(path_pairs), 1))
+    eps = 10e-6
+
+    for k, (path_a, path_b) in enumerate(path_pairs):
+        color = cmap(k / max(len(path_pairs) - 1, 1))
+        idx_a, idx_b = path_a - 1, path_b - 1
+        crossing = bool(is_crossing_matrix[idx_a, idx_b] > eps)
+
+        _highlight_path_pair(ax, path_a, path_b, color)
+        ax.plot([], [], color=color, linewidth=2.5,
+                label=f"{path_a} & {path_b} ")
+
+    margin = 0.01
+    ax.set_xlim(-margin, PANEL_W + margin)
+    ax.set_ylim(-margin, PANEL_H + margin)
+    ax.set_aspect("equal")
+    ax.invert_xaxis()
+    ax.set_xlabel("x (m)")
+    ax.set_ylabel("y (m)")
+    #ax.set_title(f"{len(path_pairs)} path pairs highlighted on panel")
+    ax.plot([], [], color="lightgray", linewidth=0.8, label="Other paths")
+    ax.legend(loc="upper right", fontsize=12)
+
     fig.tight_layout()
     plt.show()
-    return crossing
+    
+    
 
 
 def plot_panel_schematic(impact_points=None, ax=None, title="Panel schematic",
@@ -464,7 +632,7 @@ def plot_panel_schematic(impact_points=None, ax=None, title="Panel schematic",
     save_path     : file path to save the figure (e.g. 'panel.svg').  None = no save.
     """
     # ── geometry constants ────────────────────────────────────────────────
-    STIFFENERS = [(0.065, 0.004), (0.100, 0.004)]   # (x_centre, half_width) m
+    STIFFENERS = [(PANEL_W/2, 0.004)]   # (x_centre, half_width) m
     X_GRID = [0.0, 0.025, 0.065, 0.100, 0.140, PANEL_W]
     Y_GRID = [0.0, 0.080, 0.160, PANEL_H]
     X_DIMS = [25, 40, 35, 40, 25]
@@ -491,12 +659,16 @@ def plot_panel_schematic(impact_points=None, ax=None, title="Panel schematic",
             (x_c - hw, 0), 2 * hw, PANEL_H,
             linewidth=0, facecolor="cornflowerblue", alpha=0.55, zorder=1,
         ))
+        
 
+    
     # Internal dashed grid lines
     for xg in X_GRID[1:-1]:
         ax.axvline(xg, color="dimgray", linestyle="--", linewidth=0.6, zorder=2)
     for yg in Y_GRID[1:-1]:
         ax.axhline(yg, color="dimgray", linestyle="--", linewidth=0.6, zorder=2)
+
+   
 
     # Disbond area (panel 123)
     dp = DAMAGE_POINTS.get(123)
@@ -575,20 +747,29 @@ def plot_panel_schematic(impact_points=None, ax=None, title="Panel schematic",
 
 if __name__ == "__main__":
    
-    c = find_crossings()
+    fig, ax = plt.subplots(figsize=(7, 9))
+    _draw_panel_background(ax)
+   
+    c = find_crossings_by_area()
+    print(f"Crossing between 2 and 13: {c[1,12]}")
+    print(f"Crossing between 28 and S4S2: {c[27,find_path_index(4,2)]}")
+    visualize_paths_pairs([(2, 13),(28,find_path_index(4,2)+1)])
+
     # find 10 the largest values in the crossing and their indecies
-    top = np.unravel_index(np.argsort(c, axis=None)[-10:], c.shape)
-    print(top[0])
+    c_upper = np.triu(c, k=1)  # zero out lower triangle + diagonal, keep each pair once
+    flat_idx = np.argsort(c_upper, axis=None)[-5:][::-1]  # 5 distinct pairs, strongest first
+    top = np.unravel_index(flat_idx, c_upper.shape)
+
+    pairs = [(top[0][0]+1, top[1][0]+1), (4, find_path_index(4,5)+1),(find_path_index(8,5)+1,find_path_index(6,7)+1) ]
+    visualize_paths_pairs(pairs)
+
+    visualize_node_subgraph_abstract([top[0][0]+1, top[1][0]+1, 4, find_path_index(4,5)+1,find_path_index(8,5)+1,find_path_index(6,7)+1])
     for i in range(len(top[0])):
         s1 = top[0][i]+1
         s2 = top[1][i]+1
-        visualize_two_paths(s1,s2)
-    visualize_two_paths(0,27)
-    print(np.argmax(c)//28,np.mod(np.argmax(c),28))
-    print(find_path_index(8,1))
-    visualize_path(1)
-    visualize_path(7)
-    visualize_path(6)
+        visualize_paths_pairs([(s1, s2)])
+   
+   # visualize_path(6)
     visualize()
     
 
@@ -596,14 +777,12 @@ if __name__ == "__main__":
     from states import states
 
     st_123_43 = states(str(mat_file_path("123_43")))
-    visualize_adjacency(st_123_43, state_idx=70, freq_idx=DEFAULT_FREQ_INDEX)
+    visualize_adjacency(st_123_43, state_idx=70, freq_idx=DEFAULT_FREQ_INDEX, plain=True)
 
     # Example: panel 123 with four impact cases
-    impact_pts = {
-        "C3": np.array([0.100, 0.100]),
-        "C4": np.array([0.125, 0.100]),
-        "C5": np.array([0.065, 0.160]),
-        "C9": np.array([0.090, 0.150]),
-    }
+    # Don't unpack into (x, y) in the for-clause -- that unpacking runs for every item
+    # before the "if" filter is even checked, and DAMAGE_POINTS[123] is a (4, 2) polygon
+    # (not a single [x, y] point), so it would still crash regardless of the filter.
+    impact_pts = {name: xy for name, xy in DAMAGE_POINTS.items() if name != 123}
     plot_panel_schematic(impact_points=impact_pts, title="Panel 123",
                          save_path="panel_123_schematic.svg")

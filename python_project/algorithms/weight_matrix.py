@@ -75,6 +75,8 @@ def attention_matrix(States: states, state_idx: (int or str), freq_idx: int) -> 
 
     return attention
 
+
+
 def find_crossings():
 
     is_crossing = np.zeros((28, 28), dtype=float)
@@ -88,7 +90,7 @@ def find_crossings():
             p1_j, p2_j = SENSOR_POSITIONS[sensors_j[0] - 1], SENSOR_POSITIONS[sensors_j[1] - 1]
             path_j_vector = p2_j - p1_j
             cos_theta = np.dot(path_i_vector, path_j_vector) / (np.linalg.norm(path_i_vector) * np.linalg.norm(path_j_vector)) # angle between the two paths
-            cos_theta = max(0.0, cos_theta)
+            
             if sensors_i[0] in sensors_j or sensors_i[1] in sensors_j: # Paths share a sensor
                 shared_sensor = sensors_i[0] if sensors_i[0] in sensors_j else sensors_i[1]
                 other_i = sensors_i[1] if shared_sensor == sensors_i[0] else sensors_i[0]
@@ -109,12 +111,66 @@ def find_crossings():
             ub = ((p2_i[0] - p1_i[0]) * (p1_i[1] - p1_j[1]) - (p2_i[1] - p1_i[1]) * (p1_i[0] - p1_j[0])) / denom
             eps = 0
             if eps < ua < 1 - eps and eps < ub < 1 - eps:
-                is_crossing[i, j] = cos_theta + 1
-                is_crossing[j, i] = cos_theta + 1
+                is_crossing[i, j] = abs(cos_theta) + 1
+                is_crossing[j, i] = abs(cos_theta) + 1
 
     return is_crossing
 
 IS_CROSSING = find_crossings()
+
+def find_crossings_by_area(n_pixels=None, panel_number=None, state=None):
+    """
+    Directed connection strength between every pair of paths, based on the overlap of
+    their coverage regions from imagining_alghoritm.U (using optimal_beta per path,
+    i.e. U's own beta=None default -- see imagining_alghoritm.optimal_beta).
+
+    strength[i, j] = (area where paths i AND j both have nonzero U coverage)
+                    / (area where path i alone has nonzero U coverage)
+
+    Unlike find_crossings' IS_CROSSING (symmetric), this is directional -- the
+    denominator is always the ROW path's own coverage area, so strength[i, j] and
+    strength[j, i] generally differ (e.g. a short path's coverage area can sit almost
+    entirely inside a longer path's, while the reverse covers only a small fraction).
+
+    Returns a (28, 28) array; strength[i, i] == 1.0 (a path's coverage fully overlaps
+    itself), except for a path with zero coverage area, which gets an all-zero row.
+    """
+    # Local import: imagining_alghoritm imports failed_sensor_at from this module, so a
+    # top-level import here would be circular. This also keeps weight_matrix.py's own
+    # import list light (no torch / torch_geometric) for callers that only need
+    # find_crossings / adjencency_matrix, e.g. visualize_crossing_graph.py.
+    from imagining_alghoritm import U
+    from config import PANEL_W, PANEL_H, DEFAULT_N_PIXELS
+
+    if n_pixels is None:
+        n_pixels = DEFAULT_N_PIXELS
+    dA = (PANEL_W * PANEL_H) / n_pixels
+    dx = np.sqrt(dA)
+    x = np.arange(0, PANEL_W + dx, dx)
+    y = np.arange(0, PANEL_H + dx, dx)
+    grid = np.meshgrid(x, y, indexing="ij")
+    X = grid[0]
+
+    n = len(SENSOR_PAIRS)
+    # One coverage mask per path, computed once and reused for every pair (28x cheaper
+    # than recomputing U per (i, j) combination).
+    coverage_masks = []
+    for idx in range(n):
+        U_arr = np.zeros_like(X)
+        U(U_arr, grid, beta=None, panel_number=panel_number, state=state, path_indices=[idx])
+        coverage_masks.append(U_arr > 0)
+
+    areas = np.array([mask.sum() for mask in coverage_masks], dtype=float)
+
+    strength = np.zeros((n, n))
+    for i in range(n):
+        if areas[i] == 0:
+            continue
+        for j in range(n):
+            common = np.sum(coverage_masks[i] & coverage_masks[j])
+            strength[i, j] = common / areas[i]
+
+    return strength
 
 # FAILURES_RECORD is owned by config.py; imported above.
 
@@ -274,4 +330,3 @@ if __name__ == "__main__":
     plt.show()
 
 
-    

@@ -86,7 +86,7 @@ VALIDATION_PANEL_MAP = {"123": "109"}  # Owned by: extract_shi.py
 # Frequency / sampling
 # ===========================================================================
 DEFAULT_FREQ_INDEX = 2  # Hardcoded as freq=2 independently in: damage_map.py, extract_shi.py, heatmap_AE.py, states_check.py, states_plot.py, features_extractor.py, results_viz.py, big_train.py, GCN_train.py, graph_dataset.py, imagining_alghoritm.py, make_animations.py, prognostic_criteria.py, visualize_crossing_graph.py
-
+FREQUENCY_MAPPING = [50,100,125,150,200,250] # [kHz]
 # ===========================================================================
 # Sensor / panel geometry (moved from plot_panel.py)
 # ===========================================================================
@@ -117,13 +117,13 @@ DAMAGE_POINTS = {
 # ===========================================================================
 # Physical / WCPDI algorithm constants (moved from imagining_alghoritm.py)
 # ===========================================================================
-WAVE_VELOCITY = 62500        # v. Owned by: imagining_alghoritm.py
-TIME_CONST = 0.001 * 10e-3   # T. Owned by: imagining_alghoritm.py
+WAVE_VELOCITY = 1560         # v. Owned by: imagining_alghoritm.py
+TIME_CONST = 0.001   # T. Owned by: imagining_alghoritm.py
 MAX_DIST = WAVE_VELOCITY * TIME_CONST  # Imported by: GCN_train.py
 
 DEFAULT_WCPDI_C = 0.9      # Repeated as a bare literal in: heatmap_AE.py, imagining_alghoritm.py, GCN_train.py, make_animations.py
 DEFAULT_WCPDI_BETA = 0.5   # Repeated as a bare literal in: GCN_train.py, make_animations.py
-DEFAULT_N_PIXELS = 10000   # Repeated as a bare literal in: GCN_train.py, make_animations.py
+DEFAULT_N_PIXELS = 1000000   # Repeated as a bare literal in: GCN_train.py, make_animations.py
 
 # ===========================================================================
 # Model hyperparameter defaults

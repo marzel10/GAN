@@ -68,7 +68,7 @@ def P(P_arr, grid, state, dataset, model, beta=None):
 
         P_arr += sHI * W                                 # accumulate in-place
 
-def P_AE(P_arr, grid, sHI_per_state, folders, freq, dataset, features=False, beta=None):
+def P_AE(P_arr, grid, sHI_per_state):
     X, Y = grid                          # both shape (100, 100)
     for path_idx, (a, b) in enumerate(SENSOR_PAIRS):
         sHI = sHI_per_state[path_idx]     # sHI[0]: array (n_states, 1) for this path
@@ -81,19 +81,22 @@ def P_AE(P_arr, grid, sHI_per_state, folders, freq, dataset, features=False, bet
 
         R = (d1 + d2) / d - 1                            # shape (100, 100)
 
-        if beta is None:
-            beta = optimal_beta(d, MAX_DIST)
-            print(f"Path {path_idx}: d={d:.2f}, beta={beta:.2f}")
+        path_beta = optimal_beta(d, MAX_DIST)
 
-        W = np.where(R < beta, 1 - R / beta, 0.0)        # shape (100, 100)
+        W = np.where(R < path_beta, 1 - R / path_beta, 0.0)  # shape (100, 100)
 
         P_arr += sHI * W                                 # accumulate in-place
 
-def U(U_arr, grid, beta=None, panel_number=None, state=None):
+def U(U_arr, grid, beta=None, panel_number=None, state=None, path_indices=None):
+    """path_indices: 0-indexed indices into SENSOR_PAIRS to restrict the sum to
+    (None = every path, the original behavior -- used by e.g. make_elipses.py to
+    isolate a single path's ellipse of influence)."""
     X, Y = grid
     failed_sensor = failed_sensor_at(panel_number, state) if panel_number is not None and state is not None else None
 
-    for _, (a, b) in enumerate(SENSOR_PAIRS):
+    for idx, (a, b) in enumerate(SENSOR_PAIRS):
+        if path_indices is not None and idx not in path_indices:
+            continue
         # skip paths through a sensor that has failed by this state
         if failed_sensor is not None and (a == failed_sensor or b == failed_sensor):
             continue
@@ -135,18 +138,18 @@ def find_threshold(U, c, grid):
             return thr
     return 0.0
 
-def WCPDI(P, U, c, grid):
-    THR = find_threshold(U, c, grid)
+def WCPDI(P, U):
     peak_U = U.max()
-    thr_val = THR * peak_U
+
 
     # Pixels with no surviving sensor-path coverage (U == 0, e.g. near a
     # failed sensor once its paths are excluded) have no defined WCPDI value
     # -- mark them nan explicitly instead of leaving it to an incidental 0/0.
     valid = U > 0
-    WCPDI_map = np.full_like(P, np.nan)
-    with np.errstate(invalid='ignore', divide='ignore'):
-        WCPDI_map[valid] = (P[valid] - thr_val) / (U[valid] / peak_U)
+    #WCPDI_map = np.full_like(P, np.nan)
+    # with np.errstate(invalid='ignore', divide='ignore'):
+    #     WCPDI_map[valid] = P[valid] / (U[valid] / peak_U)
+    WCPDI_map = P/U*peak_U
     return WCPDI_map
 
 def extract_sHI_after_GAN(model, dataset, state, path_index, extract_HI=False):
@@ -317,7 +320,7 @@ def optimal_beta(d, max_d):
     if d >= max_d:
         return 0.0
     else:
-        return   max_d/d-1
+        return   (max_d/d-1)/50
             
 if __name__ == "__main__":
     features=True

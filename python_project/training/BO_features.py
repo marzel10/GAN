@@ -714,7 +714,7 @@ MODE = "single"            # "single" or "duo"
 MODEL_TYPE = "CNN_AE"    # used only when MODE == "single"  ("fc_AE" or "CNN_AE")
 MAX_TRIALS = 30
 PATH_I = 0
-FREQ_I = 2
+FREQ_I = 5
 
 
 def main():
@@ -724,7 +724,7 @@ def main():
 
     folder_name = f"Multi_path_BO_fixed_freq{FREQ_I}"
     
-    for PATH_I in range(5,14):
+    for PATH_I in range(15,28):
         out_dir = f"{folder_name}/Bayesian_{MODEL_TYPE}_path{PATH_I}"
         if MODE == "single":
             results = [run_bayesian_optimization(PATH_I, FREQ_I, MODEL_TYPE, max_trials=MAX_TRIALS, out_dir=out_dir, db_dir=folder_name)]

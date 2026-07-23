@@ -18,11 +18,11 @@ from imagining_alghoritm import animate_panel_sidebyside, extract_sHI_after_GAN
 from GCN_train import build_and_save_ensemble, EnsembleGCN
 from plot_panel import SENSOR_PAIRS
 from weight_matrix import failed_sensor_at
-from graph_dataset import features_GraphDataset
+from graph_dataset import Panel_GraphDataset
 import torch_geometric
 from config import (
     GRAPH_DATA_DIR, CROSS_VALIDATION_RESULTS_DIR, DEFAULT_FREQ_INDEX,
-    DEFAULT_WCPDI_C, DEFAULT_WCPDI_BETA, DEFAULT_N_PIXELS,
+    DEFAULT_WCPDI_BETA, DEFAULT_N_PIXELS,
 )
 
 
@@ -34,7 +34,7 @@ def plot_sHI_for_every_path(model, panel_number, title="sHI vs State for every p
     """
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    dataset = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=panel_number, freq=DEFAULT_FREQ_INDEX)
+    dataset = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=panel_number, freq=DEFAULT_FREQ_INDEX)
     num_states = len(dataset)
     num_paths = len(SENSOR_PAIRS)
 
@@ -93,9 +93,9 @@ def plot_sHI_for_every_path(model, panel_number, title="sHI vs State for every p
     plt.show()
 
 
-features = True
 #output_dir = str(CROSS_VALIDATION_RESULTS_DIR / "2026-07-04-19-40-54")
-output_dir = str(CROSS_VALIDATION_RESULTS_DIR / "2026-07-02-22-41-29")
+#output_dir = str(CROSS_VALIDATION_RESULTS_DIR / "2026-07-02-22-41-29")
+output_dir = r"C:\Users\Maria\Documents\Honours Programme\GAN\python_project\results\Bayesian_GCN_2026_07_22-14_01_10"
 ensemble_model_path = os.path.join(output_dir, "ensemble_model.pt")
 #build_and_save_ensemble(output_dir, ensemble_model_path)
 
@@ -106,8 +106,8 @@ plot_sHI_for_every_path(ensemble_model, 104, sensor=8)
 plot_sHI_for_every_path(ensemble_model, 105, sensor=8)
 plot_sHI_for_every_path(ensemble_model, 109)
 plot_sHI_for_every_path(ensemble_model, 123, sensor=3)
-animate_panel_sidebyside(panel_number=103, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, c=DEFAULT_WCPDI_C, beta=DEFAULT_WCPDI_BETA, features=features, transform=None, output_dir=output_dir, file_name="WCPDI_panel_103_dp")
-animate_panel_sidebyside(panel_number=104, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, c=DEFAULT_WCPDI_C, beta=DEFAULT_WCPDI_BETA, features=features, transform=None, output_dir=output_dir, file_name="WCPDI_panel_104_dp")
-animate_panel_sidebyside(panel_number=105, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, c=DEFAULT_WCPDI_C, beta=DEFAULT_WCPDI_BETA, features=features, transform=None, output_dir=output_dir, file_name="WCPDI_panel_105_dp")
-animate_panel_sidebyside(panel_number=109, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, c=DEFAULT_WCPDI_C, beta=DEFAULT_WCPDI_BETA, features=features, transform=None, output_dir=output_dir, file_name="WCPDI_panel_109_dp")
-animate_panel_sidebyside(panel_number=123, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, c=DEFAULT_WCPDI_C, beta=DEFAULT_WCPDI_BETA, features=features, transform=None, output_dir=output_dir, file_name="WCPDI_panel_123_dp")
+animate_panel_sidebyside(panel_number=103, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, transform=None, output_dir=output_dir, file_name="WCPDI_panel_103_dp")
+animate_panel_sidebyside(panel_number=104, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, transform=None, output_dir=output_dir, file_name="WCPDI_panel_104_dp")
+animate_panel_sidebyside(panel_number=105, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, transform=None, output_dir=output_dir, file_name="WCPDI_panel_105_dp")
+animate_panel_sidebyside(panel_number=109, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, transform=None, output_dir=output_dir, file_name="WCPDI_panel_109_dp")
+animate_panel_sidebyside(panel_number=123, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, transform=None, output_dir=output_dir, file_name="WCPDI_panel_123_dp")

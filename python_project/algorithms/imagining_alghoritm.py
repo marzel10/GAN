@@ -7,10 +7,10 @@ important functions:
 - P(P_arr, grid, beta, state, dataset, model): computes the damage probability map P for a given state using the sHI values from the GCN model and the spatial weighting function based on the sensor paths
 - U(U_arr, grid, beta): computes the weight map U based on the sensor paths and the spatial weighting function (like P but without the sHI values)
 - R_THR(U, thr, grid): computes the area ratio R for a given weight map U and threshold thr (how much of the area has weight above the threshold, how active is the whole panel)
-- WCPDI(P, U, c, grid): computes the WCPDI map by applying a threshold to P based on the area ratio of U and normalizing by U
+- WCPDI(P, U): computes the WCPDI map by normalizing P by U (scaled by U's peak)
 - find_threshold(U, c, grid): finds the threshold for P based on the area ratio of U and the desired coverage c (what percentage of the panel should be considered active based on U)
 - extract_sHI_after_GAN(model, dataset, state, path_index): extracts the sHI value for a specific state and path from the trained GCN model
-- animate_panel(panel_number, model, n_pixels, beta, c): creates an animation of the WCPDI map over the states for a given panel using the trained GCN model
+- animate_panel_sidebyside(panel_number, model, n_pixels, beta): creates an animation of the WCPDI map over the states for a given panel using the trained GCN model
 '''
 
 import sys
@@ -35,13 +35,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from plot_panel import SENSOR_POSITIONS, SENSOR_PAIRS, PANEL_H, PANEL_W, DAMAGE_POINTS, _draw_static_panel
-from graph_dataset import Panel_GraphDataset, features_GraphDataset
+from graph_dataset import Panel_GraphDataset
 from extract_shi import extract_shi
 
 from weight_matrix import failed_sensor_at
 from config import (
     MAX_DIST, GRAPH_DATA_DIR, ANIMATIONS_DIR, GCN_MODELS_DIR, DEFAULT_FREQ_INDEX,
-    DEFAULT_WCPDI_C, DEFAULT_N_PIXELS, CMAP_HEATMAP,
+    DEFAULT_N_PIXELS, CMAP_HEATMAP,
 )
 
 def P(P_arr, grid, state, dataset, model, beta=None):
@@ -87,7 +87,7 @@ def P_AE(P_arr, grid, sHI_per_state):
 
         P_arr += sHI * W                                 # accumulate in-place
 
-def U(U_arr, grid, beta=None, panel_number=None, state=None, path_indices=None):
+def U(U_arr, grid, panel_number=None, state=None, path_indices=None):
     """path_indices: 0-indexed indices into SENSOR_PAIRS to restrict the sum to
     (None = every path, the original behavior -- used by e.g. make_elipses.py to
     isolate a single path's ellipse of influence)."""
@@ -109,7 +109,7 @@ def U(U_arr, grid, beta=None, panel_number=None, state=None, path_indices=None):
 
         R = (d1 + d2) / d - 1
 
-        path_beta = beta if beta is not None else optimal_beta(d, MAX_DIST)
+        path_beta =optimal_beta(d, MAX_DIST)
 
         W = np.where(R < path_beta, 1 - R / path_beta, 0.0)
 
@@ -198,7 +198,7 @@ def _safe_minmax(m):
     return np.nanmin(m), np.nanmax(m)
 
 
-def animate_panel_sidebyside(panel_number, model, n_pixels, c, beta=None, features=False, transform=None, output_dir=str(ANIMATIONS_DIR), file_name=None, faults_data=None):
+def animate_panel_sidebyside(panel_number, model, n_pixels,beta=None, transform=None, output_dir=str(ANIMATIONS_DIR), file_name=None, faults_data=None):
     """Two-panel animation.
 
     Left:  globally normalised WCPDI (0-1 scale fixed across all states).
@@ -209,10 +209,7 @@ def animate_panel_sidebyside(panel_number, model, n_pixels, c, beta=None, featur
         os.makedirs(output_dir)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    if features:
-        dataset = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=panel_number, freq=DEFAULT_FREQ_INDEX)
-    else:
-        dataset = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=panel_number, freq=DEFAULT_FREQ_INDEX, big_latent=True)
+    dataset = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=panel_number, freq=DEFAULT_FREQ_INDEX, big_latent=True)
     if transform is not None:
         dataset.transform = transform
     n_states = len(dataset)
@@ -230,7 +227,7 @@ def animate_panel_sidebyside(panel_number, model, n_pixels, c, beta=None, featur
         U(U_arr, (X, Y), beta, panel_number=dataset.panel_number, state=state)
         P_arr = np.zeros_like(X)
         P(P_arr, (X, Y), state, dataset, model, beta)
-        wcpdi_maps.append(WCPDI(P_arr, U_arr, c, (X, Y)))
+        wcpdi_maps.append(WCPDI(P_arr, U_arr))
 
     # WCPDI at the known damage point vs. the panel-wide mean, tracked across states.
     damage_point = DAMAGE_POINTS[panel_number]
@@ -328,11 +325,11 @@ if __name__ == "__main__":
     if features:
         dir = str(GCN_MODELS_DIR / "gcn_features_lin.pt")
 
-        dataset_103 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=103, freq=f)
-        dataset_104 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=104, freq=f)
-        dataset_105 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=105, freq=f)
-        dataset_109 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=109, freq=f)
-        dataset_123 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=123, freq=f)
+        dataset_103 = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=103, freq=f, big_latent=True)
+        dataset_104 = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=104, freq=f, big_latent=True)
+        dataset_105 = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=105, freq=f, big_latent=True)
+        dataset_109 = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=109, freq=f, big_latent=True)
+        dataset_123 = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=123, freq=f, big_latent=True)
         bundle = torch.load(dir, weights_only=False)
         if isinstance(bundle, dict):
             model = bundle['model']
@@ -390,7 +387,7 @@ if __name__ == "__main__":
     plt.ylabel('Y Position')
     plt.tight_layout()
     
-    WCPDI_map = WCPDI(P_values, U_values, c=DEFAULT_WCPDI_C, grid=grid)
+    WCPDI_map = WCPDI(P_values, U_values)
 
     plt.figure(figsize=(6, 8))
     plt.imshow(WCPDI_map.T, extent=(0, PANEL_W, 0, PANEL_H), origin='lower', cmap=CMAP_HEATMAP)
@@ -403,4 +400,4 @@ if __name__ == "__main__":
    
     plt.show()
 
-    animate_panel_sidebyside(panel_number=103, model=model, n_pixels=DEFAULT_N_PIXELS, c=DEFAULT_WCPDI_C, beta=beta, state_to_show=0, features=features, transform=norm_transform if features else None)
+    animate_panel_sidebyside(panel_number=103, model=model, n_pixels=DEFAULT_N_PIXELS, beta=beta, transform=norm_transform if features else None)

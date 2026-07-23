@@ -116,6 +116,13 @@ def prepare_simple_dataset(path_i, freq_i, panel_name,batch_size=1,include_bench
             f_idx = np.where(np.array(ds_names) == "123_1")[0]
             for f in features_list[f_idx[0]:f_idx[0]+8]:
                 feat = f.extract_all_features(":", freq_i, path_i, sample_rate=sampling_rate, cache_dir=str(FEATURES_CACHE_DIR))
+                if include_benchmark:
+                    # Matches prepare_datastores's non-diff_bench branch: stack signal and
+                    # benchmark features into a (n_states, n_features, 2) array -- without
+                    # this, include_benchmark was silently ignored here and a CNN_AE_features
+                    # model (expecting (n_features, 2)) would get a flat (n_features,) input.
+                    feat_bench = f.extract_all_features(":", freq_i, path_i, sample_rate=sampling_rate, benchmark=True, cache_dir=str(FEATURES_CACHE_DIR))
+                    feat = np.stack([feat, feat_bench], axis=-1)
                 if 'full_feat' not in locals():
                     full_feat = feat
                 else:
@@ -148,6 +155,9 @@ def prepare_simple_dataset(path_i, freq_i, panel_name,batch_size=1,include_bench
             f_idx = np.where(np.array(ds_names) == panel_name)[0]
             f = features_list[f_idx[0]]
             feat = f.extract_all_features(":", freq_i, path_i, sample_rate=sampling_rate, cache_dir=str(FEATURES_CACHE_DIR))
+            if include_benchmark:
+                feat_bench = f.extract_all_features(":", freq_i, path_i, sample_rate=sampling_rate, benchmark=True, cache_dir=str(FEATURES_CACHE_DIR))
+                feat = np.stack([feat, feat_bench], axis=-1)
             ds, _ = make_ds_features(feat, feat.shape[0], batch_size=batch_size)
             return ds
         else:

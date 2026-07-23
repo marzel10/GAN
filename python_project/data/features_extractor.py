@@ -20,7 +20,7 @@ import numpy as np
 from states import states
 import tensorflow as tf
 import tensorflow_probability as tfp
-from config import BASE_PANELS, PANEL_123_SUBPANELS, mat_file_path, FEATURES_CACHE_DIR, DEFAULT_FREQ_INDEX
+from config import BASE_PANELS, GRAPH_DATA_DIR, PANEL_123_SUBPANELS, mat_file_path, FEATURES_CACHE_DIR, DEFAULT_FREQ_INDEX
 
 class FeaturesExtractor(states):
     def __init__(self, mat_file):
@@ -287,7 +287,10 @@ class FeaturesExtractor(states):
     def extract_S14(self, s_idx, freq, p_idx, sample_rate=1.0, benchmark=False):
         return self._extract_S(self._S14, s_idx, freq, p_idx, sample_rate, benchmark)
 
-    def extract_all_features(self, s_idx, freq, p_idx, sample_rate=1.0, benchmark=False, cache_dir=None):
+    def extract_all_features(self, s_idx, freq, p_idx, sample_rate=1.0, benchmark=False, diff = False, cache_dir=None):
+
+        if benchmark and diff:
+            raise ValueError("Cannot set both benchmark and diff to True. Please choose one.")
 
         if p_idx == ":":
             print(f"Extracting features for all paths at freq {freq} Hz...")
@@ -295,6 +298,8 @@ class FeaturesExtractor(states):
                 panel_name = Path(self.mat_file).stem
                 if benchmark:
                     cache_file = Path(cache_dir) / f"{panel_name}_freq{freq}_all_paths_benchmark_full.npy"
+                elif diff:
+                    cache_file = Path(cache_dir) / f"{panel_name}_freq{freq}_all_paths_diff_full.npy"
                 else:
                     cache_file = Path(cache_dir) / f"{panel_name}_freq{freq}_all_paths_full.npy"
                 if cache_file.exists():
@@ -304,10 +309,13 @@ class FeaturesExtractor(states):
                     all_features = []
 
                     for p in range(0,28):
-                        if benchmark:
+                        if benchmark or diff:
                             features_p = self.extract_all_features(s_idx, freq, p_idx=p, sample_rate=sample_rate, benchmark=False, cache_dir=None)
                             features_p_ben = self.extract_all_features(s_idx, freq, p_idx=p, sample_rate=sample_rate, benchmark=True, cache_dir=None)
-                            features_p = np.concatenate([features_p, features_p_ben], axis=-1)
+                            if benchmark:
+                                features_p = np.concatenate([features_p, features_p_ben], axis=-1)
+                            elif diff:
+                                features_p = features_p - features_p_ben
                         else:
                             features_p = self.extract_all_features(s_idx, freq, p_idx=p, sample_rate=sample_rate, benchmark=False, cache_dir=None)
                         all_features.append(features_p)
@@ -334,6 +342,9 @@ class FeaturesExtractor(states):
                 panel_name = Path(self.mat_file).stem
                 if benchmark:
                     cache_file = Path(cache_dir) / f"{panel_name}_freq{freq}_path{p_idx}_benchmark_full.npy"
+
+                elif diff:
+                    cache_file = Path(cache_dir) / f"{panel_name}_freq{freq}_path{p_idx}_diff_full.npy"
                 else:
                     cache_file = Path(cache_dir) / f"{panel_name}_freq{freq}_path{p_idx}_full.npy"
                 if cache_file.exists():
@@ -388,6 +399,8 @@ class FeaturesExtractor(states):
                 panel_name = Path(self.mat_file).stem
                 if benchmark:
                     cache_file = Path(cache_dir) / f"{panel_name}_freq{freq}_path{p_idx}_benchmark_full.npy"
+                elif diff:
+                    cache_file = Path(cache_dir) / f"{panel_name}_freq{freq}_path{p_idx}_diff_full.npy"
                 else:
                     cache_file = Path(cache_dir) / f"{panel_name}_freq{freq}_path{p_idx}_full.npy"
                 np.save(str(cache_file), out)
@@ -423,7 +436,7 @@ if __name__ == "__main__":
         mat_file = str(mat_file_path(panel_name))
         extractor = FeaturesExtractor(mat_file)
         sampling_rate = 1 / extractor.dt()
-        features = extractor.extract_all_features(s_idx=":", freq=DEFAULT_FREQ_INDEX, p_idx=":", sample_rate=sampling_rate, benchmark=True, cache_dir=str(FEATURES_CACHE_DIR))
+        features = extractor.extract_all_features(s_idx=":", freq=DEFAULT_FREQ_INDEX, p_idx=":", sample_rate=sampling_rate, benchmark=False, diff=True, cache_dir=str(GRAPH_DATA_DIR / "raw"))
         print(f"Extracted features shape for States_{panel_name}.mat: {features.shape}")
        
    

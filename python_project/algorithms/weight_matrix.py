@@ -23,7 +23,7 @@ import matplotlib.pyplot as plt
 from plot_panel import SENSOR_POSITIONS, SENSOR_PAIRS
 from config import NR_SAVED_STATES, STATE_START_INDICES, FAILURES_RECORD, mat_file_path, DEFAULT_FREQ_INDEX, CMAP_SEQUENTIAL, CMAP_BLUES
 
-def attention_matrix(States: states, state_idx: (int or str), freq_idx: int) -> np.ndarray:
+def attention_matrix(States: states, state_idx: (int or str), freq_idx: int, energy: bool=True) -> np.ndarray:
     num_paths = States.num_pair
     num_states = States.num_states
 
@@ -45,22 +45,29 @@ def attention_matrix(States: states, state_idx: (int or str), freq_idx: int) -> 
 
     for i in range(num_paths):
         amp_i = States.amplitude(state_idx, freq_idx, i)
-        
-        energy_i =States.signal_energy(state_idx, freq_idx, i)
+
+        if energy:
+            strength_i =States.signal_energy(state_idx, freq_idx, i)
+        else:
+            strength_i = np.sqrt(States.signal_envelope_peak(state_idx, freq_idx, i)*States.signal_envelope_peak_area(state_idx, freq_idx, i))
         for j in range(num_paths):
             amp_j = States.amplitude(state_idx, freq_idx, j)
-            energy_j = States.signal_energy(state_idx, freq_idx, j)
+            if energy:
+                strength_j = States.signal_energy(state_idx, freq_idx, j)
+            else:
+                strength_j = np.sqrt(States.signal_envelope_peak(state_idx, freq_idx, j)*States.signal_envelope_peak_area(state_idx, freq_idx, j))
         
-            if np.any(energy_i == 0) or np.any(energy_j == 0):
+            if np.any(strength_i == 0) or np.any(strength_j == 0):
                 print(f"Warning: Zero energy for state {state_idx}, frequency {freq_idx}, paths {i} or {j}. Check if the amplitude values are correct.")
                 
             
             if isinstance(state_idx, str) and state_idx == ":":
-                attention[:, i, j] = energy_i + energy_j
+                attention[:, i, j] = strength_i + strength_j
             else:
-                attention[i, j] = energy_i + energy_j
+                attention[i, j] = strength_i + strength_j
     if attention.all() == 0:    
         print(f"WARNING: All attention values are zero for state {state_idx}. Check if the energy calculations are correct.")
+    '''
         # Optional: Normalize the attention values
     if isinstance(state_idx, str) and state_idx == ":":
 
@@ -69,10 +76,10 @@ def attention_matrix(States: states, state_idx: (int or str), freq_idx: int) -> 
     else:
         attention = attention - np.min(attention)
         attention /= np.max(attention) - np.min(attention) 
-
+    
     if (attention == 0).all():
         print("Warning: All attention values are zero. Check if the energy calculations are correct.")
-
+    '''
     return attention
 
 
@@ -113,6 +120,11 @@ def find_crossings():
             if eps < ua < 1 - eps and eps < ub < 1 - eps:
                 is_crossing[i, j] = abs(cos_theta) + 1
                 is_crossing[j, i] = abs(cos_theta) + 1
+
+
+    # Normalize the crossing values to be between 0 and 1
+    is_crossing = is_crossing - np.min(is_crossing)
+    is_crossing /= np.max(is_crossing) - np.min(is_crossing)
 
     return is_crossing
 
@@ -157,7 +169,7 @@ def find_crossings_by_area(n_pixels=None, panel_number=None, state=None):
     coverage_masks = []
     for idx in range(n):
         U_arr = np.zeros_like(X)
-        U(U_arr, grid, beta=None, panel_number=panel_number, state=state, path_indices=[idx])
+        U(U_arr, grid, panel_number=panel_number, state=state, path_indices=[idx])
         coverage_masks.append(U_arr > 0)
 
     areas = np.array([mask.sum() for mask in coverage_masks], dtype=float)
@@ -212,12 +224,15 @@ def _paths_touching_sensor(sensor):
     """Path indices (0-27) whose SENSOR_PAIRS entry includes this sensor id (1-8)."""
     return {k for k, (a, b) in enumerate(SENSOR_PAIRS) if a == sensor or b == sensor}
 
-def adjencency_matrix(States, state_idx: (int or str), freq_idx: int) -> np.ndarray:
+def adjencency_matrix(States, state_idx: (int or str), freq_idx: int, type: str="basic") -> np.ndarray:
 
     failure_threshold = _global_failure_threshold(States.panel_name)
     failed_paths = _paths_touching_sensor(failure_threshold[1]) if failure_threshold is not None else None
 
-    attention = attention_matrix(States, state_idx, freq_idx)
+    if type == "peak":
+        attention = attention_matrix(States, state_idx, freq_idx, energy=False)
+    else:
+        attention = attention_matrix(States, state_idx, freq_idx)
     if (attention == 0).all():
         print("Warning: Attention matrix is all zeros. Check if the attention values are correct.")
 
@@ -227,6 +242,11 @@ def adjencency_matrix(States, state_idx: (int or str), freq_idx: int) -> np.ndar
         adjacency = np.zeros((States.num_states, 28, 28), dtype=float)
         for s in range(States.num_states):
             global_s = s + subpanel_start
+            # Computed once per state, not per (i, j) pair -- find_crossings_by_area
+            # returns the full 28x28 strength matrix regardless of which pair you
+            # index into, so recomputing it inside the (i, j) loop below was doing
+            # up to ~380 redundant 28-path U-field evaluations per state for nothing.
+            crossing_strength = find_crossings_by_area(panel_number=States.panel_name, state=global_s) if type == "by_area" else None
             for i in range(28):
                 for j in range(i + 1, 28):
                     if IS_CROSSING[i, j]>0:
@@ -234,13 +254,28 @@ def adjencency_matrix(States, state_idx: (int or str), freq_idx: int) -> np.ndar
                         if failed_paths is not None and global_s >= failure_threshold[0] and (i in failed_paths or j in failed_paths):
                             # Skip paths through the failed sensor for the affected states
                             continue
-                        adjacency[s, i, j] = attention[s, i, j] + IS_CROSSING[i, j]
-                        adjacency[s, j, i] = attention[s, i, j] + IS_CROSSING[i, j]
+
+                        if type == "basic" or type == "peak":
+                            adjacency[s, i, j] = attention[s, i, j] * IS_CROSSING[i, j]
+                            adjacency[s, j, i] = attention[s, i, j] * IS_CROSSING[i, j]
+                        elif type == "by_area":
+                            adjacency[s, i, j] = attention[s, i, j] * crossing_strength[i, j]
+                            adjacency[s, j, i] = attention[s, i, j] * crossing_strength[j, i]
+                        elif type == "geometry":
+                            adjacency[s, i, j] =  IS_CROSSING[i, j] 
+                            adjacency[s, j, i] =  IS_CROSSING[i, j] 
+                        else:
+                            raise ValueError(f"Unknown adjacency matrix type: {type}")
+
+
 
     else:
         # state_idx is GLOBAL by convention (attention_matrix shifts it to
         # local internally when indexing this States object's own arrays)
         adjacency = np.zeros((28, 28), dtype=float)
+        # Computed once for this state, not per (i, j) pair -- see the same fix in
+        # the ":" branch above.
+        crossing_strength = find_crossings_by_area(panel_number=States.panel_name, state=state_idx) if type == "by_area" else None
         for i in range(28):
             for j in range(i + 1, 28):
                 eps = 10e-6
@@ -248,8 +283,18 @@ def adjencency_matrix(States, state_idx: (int or str), freq_idx: int) -> np.ndar
                     if failed_paths is not None and state_idx >= failure_threshold[0] and (i in failed_paths or j in failed_paths):
                         # Skip paths through the failed sensor for the affected state
                         continue
-                    adjacency[i, j] = attention[i, j] + IS_CROSSING[i, j]
-                    adjacency[j, i] = attention[i, j] + IS_CROSSING[i, j]
+
+                    if type == "basic" or type == "peak":
+                        adjacency[i, j] = attention[i, j] * IS_CROSSING[i, j]
+                        adjacency[j, i] = attention[i, j] * IS_CROSSING[i, j]
+                    elif type == "by_area":
+                        adjacency[i, j] = attention[i, j] * crossing_strength[i, j]
+                        adjacency[j, i] = attention[i, j] * crossing_strength[j, i]
+                    elif type == "geometry":
+                        adjacency[i, j] =  IS_CROSSING[i, j] 
+                        adjacency[j, i] =  IS_CROSSING[i, j]
+                    else:
+                        raise ValueError(f"Unknown adjacency matrix type: {type}")
 
     return adjacency
 

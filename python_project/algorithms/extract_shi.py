@@ -16,13 +16,15 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 import os
 import torch
-from fc_AE import KSparse
+from fc_AE import ExpandLastDim, KSparse, SqueezeLastDim
+from ae_cross_validation_helper import ClipLayer, _CompatHeNormal
+from big_train import monotonicity_loss
 import numpy as np
 import tensorflow as tf
 from states_check import prepare_simple_dataset
 from config import VALIDATION_PANEL_MAP, ARCHIVE_DIR, GRAPH_DATA_DIR, BASE_PANELS, DEFAULT_FREQ_INDEX
 
-def extract_shi(folders, freq, dataset, GAN_dir=str(ARCHIVE_DIR), features=False, path_idx=None):
+def extract_shi(folders, freq, dataset, GAN_dir=str(_PROJECT_ROOT), features=False, path_idx=None):
     '''
     Extract sHI values from the trained autoencoder models for a given dataset and frequency.
     inputs:
@@ -44,59 +46,59 @@ def extract_shi(folders, freq, dataset, GAN_dir=str(ARCHIVE_DIR), features=False
     model_panel = VALIDATION_PANEL_MAP.get(dataset, dataset)
 
     for folder in folders:
-    
+        last_part = folder.split("_")[-1]
+        path_i = last_part.find("path")
+        path = int(last_part[path_i + 4:]) if path_i != -1 else None
+        print(f"Extracting sHI for path {path}")
         for file in os.listdir(folder):
-            if not file.endswith(".h5"):
+            if not file.endswith("ensemble_model.keras"):
                 continue
-        
-        
-                
-            parts = file.split("_")
-            seg = parts[3]
-            i = seg.find("-")
-            if i != -1:
-                path = int(seg[4:i])
-            else:
-                path = int(seg.split(".")[0])
 
-            
-            panel = parts[2]
-            if panel != model_panel and features:
-                continue
-            if path_idx is not None and path != path_idx:
-                continue
         
-            custom_objs = {"KSparse": KSparse}
-            model = tf.keras.models.load_model(os.path.join(folder, file), custom_objects=custom_objs, compile=False, safe_mode=False)
+            CUSTOM_OBJECTS = {
+                "KSparse": KSparse,
+                "ExpandLastDim": ExpandLastDim,
+                "SqueezeLastDim": SqueezeLastDim,
+                "ClipLayer": ClipLayer,
+                "monotonicity_loss": monotonicity_loss,
+                "HeNormal": _CompatHeNormal,
+            }
+            model = tf.keras.models.load_model(os.path.join(folder, file), custom_objects=CUSTOM_OBJECTS, compile=False, safe_mode=False)
             if features: 
                 ds = prepare_simple_dataset(path, freq, dataset, include_benchmark=True, features=True)
             else:
                 ds = prepare_simple_dataset(path, freq, dataset, include_benchmark=True)
 
             if features:
-                big_latent_extractor = tf.keras.Model(inputs=model.input, outputs=model.get_layer("latent_space").output)
+                # build_ensemble_ae now outputs (sHI, reconstruction, latent_space)
+                # natively -- latent_space no longer needs a separate tapped sub-model.
+                path_latent, _, big_latent = model.predict(ds, verbose=0)
             else:
                 big_latent_extractor = tf.keras.Model(inputs=model.input, outputs=model.get_layer("k_sparse_1").output)
+                # outputs=(sHI, reconstruction): path_latent is sHI, per this
+                # function's own docstring ("latents_all: ... the sHI values").
+                path_latent, _ = model.predict(ds, verbose=0)
+                big_latent = big_latent_extractor.predict(ds, verbose=0)
 
-            _, path_latent = model.predict(ds, verbose=0)
             if path_latent.ndim == 3:
                 path_latent = path_latent.reshape(-1, path_latent.shape[-1])
 
             latents_all.append(path_latent)
             path_labels.append(path)
-            big_latent_all.append(big_latent_extractor.predict(ds, verbose=0))
+            big_latent_all.append(big_latent)
 
     return latents_all, path_labels, big_latent_all
 
 
 if __name__ == "__main__":
 
-    folders = ["Model_for_every_path"]
+    freq = 1
+    folders = [f"Multi_path_BO_fixed_freq{freq}\\Bayesian_CNN_AE_path{i}" for i in range(0, 28)]
     datasets = BASE_PANELS + ["123"]
 
-    freq = DEFAULT_FREQ_INDEX
+   
     for dataset in datasets:
-        latents_all, path_labels, big_latent_all = extract_shi(folders, freq, dataset)
+        latents_all, path_labels, big_latent_all = extract_shi(folders, freq, dataset, features=True)
         print(f"Collected latents for {len(latents_all)} paths.")
         print(f"Shape of latents matrix: {np.array(latents_all).shape}")
         print(f"Shape of the path labels: {np.array(path_labels).shape}")

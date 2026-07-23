@@ -85,7 +85,7 @@ VALIDATION_PANEL_MAP = {"123": "109"}  # Owned by: extract_shi.py
 # ===========================================================================
 # Frequency / sampling
 # ===========================================================================
-DEFAULT_FREQ_INDEX = 2  # Hardcoded as freq=2 independently in: damage_map.py, extract_shi.py, heatmap_AE.py, states_check.py, states_plot.py, features_extractor.py, results_viz.py, big_train.py, GCN_train.py, graph_dataset.py, imagining_alghoritm.py, make_animations.py, prognostic_criteria.py, visualize_crossing_graph.py
+DEFAULT_FREQ_INDEX = 4  # Hardcoded as freq=5 independently in: damage_map.py, extract_shi.py, heatmap_AE.py, states_check.py, states_plot.py, features_extractor.py, results_viz.py, big_train.py, GCN_train.py, graph_dataset.py, imagining_alghoritm.py, make_animations.py, prognostic_criteria.py, visualize_crossing_graph.py
 FREQUENCY_MAPPING = [50,100,125,150,200,250] # [kHz]
 # ===========================================================================
 # Sensor / panel geometry (moved from plot_panel.py)
@@ -130,6 +130,7 @@ DEFAULT_N_PIXELS = 1000000   # Repeated as a bare literal in: GCN_train.py, make
 # ===========================================================================
 DEFAULT_K_SPARSE = 10          # Repeated independently 11x across fc_AE.py and big_train.py
 DEFAULT_N_FEATURES = 66        # Duplicated as N_FEAT in big_train.py and the n_feat default in fc_AE.py
+DEFAULT_GCN_FEATURES = 24      # Duplicated as N_GCN_FEAT in big_train.py and the gcn_feat default in fc_AE.py
 K_SPARSE_PENALTY_WEIGHT = 0.01  # Owned by: BO.py
 
 # ===========================================================================

@@ -89,13 +89,13 @@ def combined_path_loss(HI, out, state_ids, panel_ids):
 
 _DAMAGE_MAP_GEOMETRY_CACHE = {}
 
-def _damage_map_geometry(n_pixels, beta, c):
+def _damage_map_geometry(n_pixels):
     # U()/find_threshold() are reused as-is from imagining_alghoritm.py: they only
     # depend on panel geometry, not on the model's sHI output, so there's nothing
     # to backprop through here. The per-path weight maps (W_stack) are re-derived
     # with the same formula as U()'s internal loop, but kept as torch tensors so
     # the sHI-weighted P map below stays differentiable.
-    key = (n_pixels, beta, c)
+    key = (n_pixels)
     if key in _DAMAGE_MAP_GEOMETRY_CACHE:
         return _DAMAGE_MAP_GEOMETRY_CACHE[key]
 
@@ -107,8 +107,7 @@ def _damage_map_geometry(n_pixels, beta, c):
     X, Y = grid
 
     U_arr = np.zeros_like(X)
-    _wcpdi_U(U_arr, grid, beta)
-    thr = _wcpdi_find_threshold(U_arr, c, grid)
+    _wcpdi_U(U_arr, grid)
     peak_U = U_arr.max()
 
     W_maps = []
@@ -117,16 +116,16 @@ def _damage_map_geometry(n_pixels, beta, c):
         d1 = np.sqrt((X - p1[0]) ** 2 + (Y - p1[1]) ** 2)
         d2 = np.sqrt((X - p2[0]) ** 2 + (Y - p2[1]) ** 2)
         d = np.sqrt(((p1 - p2) ** 2).sum())
-        path_beta = beta if beta is not None else optimal_beta(d, MAX_DIST)
+        path_beta = optimal_beta(d, MAX_DIST)
         R = (d1 + d2) / d - 1
         W_maps.append(np.where(R < path_beta, 1 - R / path_beta, 0.0))
     W_stack = np.stack(W_maps, axis=0)  # (num_paths, nx, ny)
 
-    result = (dx, U_arr, thr * peak_U, peak_U, W_stack)
+    result = (dx, U_arr, peak_U, W_stack)
     _DAMAGE_MAP_GEOMETRY_CACHE[key] = result
     return result
 
-def damage_map_loss(out, state_ids, panel_ids, n_pixels=400, c=DEFAULT_WCPDI_C, beta=None):
+def damage_map_loss(out, state_ids, panel_ids, n_pixels=400):
     # out:       (batch_size * num_paths, 1) — per-path sHI predictions, ordered graph then path
     # panel_ids: (batch_size,) — panel identity of each graph, used to look up its damage point
     #
@@ -140,17 +139,25 @@ def damage_map_loss(out, state_ids, panel_ids, n_pixels=400, c=DEFAULT_WCPDI_C, 
     batch_size = out.shape[0] // num_paths
     path_out = out.reshape(batch_size, num_paths)
 
-    dx, U_arr, thr_val, peak_U, W_stack = _damage_map_geometry(n_pixels, beta, c)
+    dx, U_arr, peak_U, W_stack = _damage_map_geometry(n_pixels)
     W_stack = torch.tensor(W_stack, dtype=out.dtype, device=out.device)
     U_map = torch.tensor(U_arr, dtype=out.dtype, device=out.device)
+
+    # Pixels outside every sensor path's ellipse of influence have U == 0 (no
+    # coverage), so WCPDI is undefined there -- dividing by them produces inf/nan
+    # that would otherwise contaminate mean_WCPDI. Exclude them from the mean via
+    # a safe denominator + boolean mask (each excluded pixel is elementwise
+    # independent, so masking it out of the mean doesn't touch other pixels' grad).
+    valid_mask = U_map > 0
+    U_safe = torch.where(valid_mask, U_map, torch.ones_like(U_map))
 
     loss = out.sum() * 0.0
     for i in range(batch_size):
         panel_number = int(panel_ids[i].item())
 
         P_map = (path_out[i].view(-1, 1, 1) * W_stack).sum(dim=0)
-        WCPDI_map = (P_map - thr_val) / (U_map / peak_U)
-        mean_WCPDI = WCPDI_map.mean()
+        WCPDI_map = P_map  / (U_safe / peak_U)
+        mean_WCPDI = WCPDI_map[valid_mask].mean()
 
         damage_point = DAMAGE_POINTS[panel_number]
         if damage_point.ndim == 2:
@@ -160,7 +167,7 @@ def damage_map_loss(out, state_ids, panel_ids, n_pixels=400, c=DEFAULT_WCPDI_C, 
         damage_WCPDI = WCPDI_map[ix, iy]
 
         diff = damage_WCPDI - mean_WCPDI
-        if state_ids[i] < TOTAL_STATES.get(str(panel_number), 0)*0.5:
+        if state_ids[i] < TOTAL_STATES.get(str(panel_number), 0)*0:
             continue
         else:
             loss = loss + ((diff + 10.0) ** 2 - 100.0)
@@ -529,7 +536,11 @@ def ensemble_predict(datasets, test_dataset, model_path, save_dir=None):
     states_per_dataset = [None] * n
 
     for model_file in sorted(os.listdir(model_path)):
-        if not model_file.endswith('.pt'):
+        # Skip a leftover ensemble_model.pt from a previous run in this same
+        # directory -- it's a raw EnsembleGCN module, not a {'model',...}
+        # checkpoint dict, so it can't be unpacked the same way (see the same
+        # exclusion in build_and_save_ensemble).
+        if not model_file.endswith('.pt') or model_file == 'ensemble_model.pt':
             continue
         checkpoint = torch.load(os.path.join(model_path, model_file), weights_only=False)
         model = checkpoint['model'].to(device)
@@ -749,11 +760,11 @@ if __name__ == "__main__":
 
     # Create 5 animation of panels using the ensemble model
     ensemble_model = torch.load(ensemble_model_path, weights_only=False)
-    animate_panel_sidebyside(panel_number=103, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, c=DEFAULT_WCPDI_C, beta=DEFAULT_WCPDI_BETA, features=features, transform=None, output_dir=output_dir, file_name=f"WCPDI_panel_103")
-    animate_panel_sidebyside(panel_number=104, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, c=DEFAULT_WCPDI_C, beta=DEFAULT_WCPDI_BETA, features=features, transform=None, output_dir=output_dir, file_name=f"WCPDI_panel_104")
-    animate_panel_sidebyside(panel_number=105, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, c=DEFAULT_WCPDI_C, beta=DEFAULT_WCPDI_BETA, features=features, transform=None, output_dir=output_dir, file_name=f"WCPDI_panel_105")
-    animate_panel_sidebyside(panel_number=109, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, c=DEFAULT_WCPDI_C, beta=DEFAULT_WCPDI_BETA, features=features, transform=None, output_dir=output_dir, file_name=f"WCPDI_panel_109")
-    animate_panel_sidebyside(panel_number=123, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, c=DEFAULT_WCPDI_C, beta=DEFAULT_WCPDI_BETA,  features=features, transform=None, output_dir=output_dir, file_name=f"WCPDI_panel_123")
+    animate_panel_sidebyside(panel_number=103, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, beta=DEFAULT_WCPDI_BETA, transform=None, output_dir=output_dir, file_name=f"WCPDI_panel_103")
+    animate_panel_sidebyside(panel_number=104, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, beta=DEFAULT_WCPDI_BETA, transform=None, output_dir=output_dir, file_name=f"WCPDI_panel_104")
+    animate_panel_sidebyside(panel_number=105, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, beta=DEFAULT_WCPDI_BETA, transform=None, output_dir=output_dir, file_name=f"WCPDI_panel_105")
+    animate_panel_sidebyside(panel_number=109, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, beta=DEFAULT_WCPDI_BETA, transform=None, output_dir=output_dir, file_name=f"WCPDI_panel_109")
+    animate_panel_sidebyside(panel_number=123, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, beta=DEFAULT_WCPDI_BETA, transform=None, output_dir=output_dir, file_name=f"WCPDI_panel_123")
     
         # shi Plots for example paths
         # plot_sHI(model, dataset_109, path_idx=0)

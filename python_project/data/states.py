@@ -26,6 +26,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from scipy.io import loadmat
+from scipy.signal import hilbert
 import h5py
 import matplotlib.pyplot as plt
 import numpy as np
@@ -126,7 +127,38 @@ class states:
         amp = self.amplitude(s_idx, freq, p_idx)
         dim = np.where(np.array(amp.shape) == 4000)[0]
         return tf.reduce_sum(tf.square(amp), axis=dim)
-    
+
+    def signal_envelope_peak(self, s_idx, freq, p_idx):
+        # tf.signal.hilbert doesn't exist in this TF version -- scipy.signal.hilbert
+        # is the real analytic-signal transform. amplitude() returns shape (4000, 1)
+        # for a scalar s_idx (not squeezed like the multi-state branch), so flatten
+        # first or hilbert would transform along the wrong (length-1) axis.
+        amp = np.asarray(self.amplitude(s_idx, freq, p_idx)).reshape(-1)
+        envelope = np.abs(hilbert(amp))
+        return tf.reduce_max(envelope)
+
+    def signal_envelope_peak_area(self, s_idx, freq, p_idx):
+        # Trapezoidal area under the envelope's main lobe: walk outward from the
+        # global peak in both directions while the envelope is still descending,
+        # stopping at the nearest local minimum (or the signal boundary) on each side.
+        amp = np.asarray(self.amplitude(s_idx, freq, p_idx)).reshape(-1)
+        envelope = np.abs(hilbert(amp))
+        peak_idx = int(np.argmax(envelope))
+
+        area = 0.0
+        i = peak_idx
+        while i > 0 and envelope[i - 1] <= envelope[i]:
+            area += 0.5 * (envelope[i] + envelope[i - 1])
+            i -= 1
+
+        i = peak_idx
+        while i < len(envelope) - 1 and envelope[i + 1] <= envelope[i]:
+            area += 0.5 * (envelope[i] + envelope[i + 1])
+            i += 1
+
+        return area * self.dt()
+
+
     def benchmark_amplitude(self, s_idx, freq, p_idx):
         if freq >= self.num_freq or p_idx >= self.num_pair:
             raise ValueError(

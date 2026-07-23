@@ -40,6 +40,34 @@ class ClipLayer(tf.keras.layers.Layer):
         return config
 
 
+'''Some fold models were saved by an older Keras version whose layer configs include
+fields the currently installed Keras's __init__ signatures no longer accept (e.g.
+HeNormal's input_axes/output_axes, BatchNormalization's
+renorm/renorm_clipping/renorm_momentum). A custom_objects={"HeNormal": ...}
+substitution can't fix this: Keras 3's custom_objects lookup keys strictly on the saved
+`registered_name` field, and these older files predate
+@register_keras_serializable() entirely, so registered_name is None -- Keras never even
+checks custom_objects, it resolves the class straight from the real keras module. The
+only place that can actually intercept this is the real class itself, so patch it in
+place and drop the specific kwargs its __init__ no longer recognizes.'''
+
+
+def _drop_kwargs(cls, *bad_keys):
+    real_init = cls.__init__
+
+    def patched_init(self, *args, **kwargs):
+        for key in bad_keys:
+            kwargs.pop(key, None)
+        real_init(self, *args, **kwargs)
+
+    cls.__init__ = patched_init
+
+
+_drop_kwargs(tf.keras.initializers.HeNormal, "input_axes", "output_axes")
+_drop_kwargs(tf.keras.layers.BatchNormalization, "renorm", "renorm_clipping", "renorm_momentum")
+_CompatHeNormal = tf.keras.initializers.HeNormal  # kept importable for existing CUSTOM_OBJECTS dicts
+
+
 def _predict_dataset(model, ds):
     '''Runs model.predict over every batch of a datastore, returns concatenated (sHI, reconstruction) arrays.'''
     shi_idx = model.output_names.index('sHI')
@@ -147,9 +175,31 @@ def build_ensemble_ae(fold_entries):
     input_shape = fold_entries[0][1].input_shape[1:]
     inp = tf.keras.Input(shape=input_shape, name="raw_input")
 
-    shi_branches, rec_branches = [], []
+    shi_branches, rec_branches, latent_branches = [], [], []
     for panel, model, norm_stats in fold_entries:
-        model.name = f"fold_{panel}_{model.name}"
+        # "latent_space" is an internal KSparse layer, not one of model's declared
+        # outputs (only sHI/reconstruction are). Fold it into a single 3-output model
+        # up front, rather than calling `model` plus a second sub-model tapping the same
+        # encoder layers -- two separate Model containers both tracking the same shared
+        # layers breaks Keras's .keras save/reload (the shared layers' weights silently
+        # drop on reload, since they end up double-tracked in the object graph).
+        shi_idx = model.output_names.index("sHI")
+        rec_idx = model.output_names.index("reconstruction")
+        latent_output = model.get_layer("latent_space").output
+        model = tf.keras.Model(inputs=model.input, outputs=[model.output[shi_idx], model.output[rec_idx], latent_output], name=model.name)
+        shi_idx, rec_idx, latent_idx = 0, 1, 2
+
+        # Every fold's model was built by the same factory function (build_CNN_AE_features
+        # / build_fc_AE_features), so their internal layers (bench_comp, enc_dense,
+        # latent_space, sHI, ...) all share identical names across folds. Keras's .keras
+        # save format indexes weights by layer name across the *whole* nested tree, so
+        # without uniquifying them here, sibling folds' same-named layers collide on
+        # save and silently drop weights on reload. Renaming model.name alone (as
+        # before) isn't enough -- every layer inside it needs a unique name too.
+        prefix = f"fold_{panel}_"
+        for layer in model.layers:
+            layer.name = prefix + layer.name
+        model.name = prefix + model.name
 
         mean, variance, norm_axis = _normalization_mean_variance_axis(norm_stats, input_shape)
 
@@ -161,18 +211,17 @@ def build_ensemble_ae(fold_entries):
         x_norm = norm_layer(inp)
         x_norm = ClipLayer(-10.0, 10.0, name=f"clip_{panel}")(x_norm)
 
-        shi_idx = model.output_names.index("sHI")
-        rec_idx = model.output_names.index("reconstruction")
         outs = model(x_norm)
-
         rec_denorm = denorm_layer(outs[rec_idx])
 
         shi_branches.append(outs[shi_idx])
         rec_branches.append(rec_denorm)
+        latent_branches.append(outs[latent_idx])
 
     shi_avg = tf.keras.layers.Average(name="sHI")(shi_branches)
     rec_avg = tf.keras.layers.Average(name="reconstruction")(rec_branches)
-    return tf.keras.Model(inputs=inp, outputs=[shi_avg, rec_avg], name="ensemble_ae")
+    latent_avg = tf.keras.layers.Average(name="latent_space")(latent_branches)
+    return tf.keras.Model(inputs=inp, outputs=[shi_avg, rec_avg, latent_avg], name="ensemble_ae")
 
 
 def plot_ensemble_sHI(ensemble_model, ref_ds_dict, ref_norm_stats, States_dict, panels, save_path):

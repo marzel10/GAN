@@ -41,7 +41,7 @@ import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
 
-from ae_cross_validation_helper import ClipLayer, _normalization_mean_variance_axis, _predict_dataset
+from ae_cross_validation_helper import ClipLayer, _CompatHeNormal, _normalization_mean_variance_axis, _predict_dataset
 from fc_AE import KSparse, ExpandLastDim, SqueezeLastDim
 from big_train import monotonicity_loss
 from states_check import prepare_datastores
@@ -55,15 +55,6 @@ FOLD_KEYS = BASE_PANELS + ["ensemble"]   # Model_val_<panel>.keras x4 + ensemble
 N_PATHS = 28
 METRIC_NAMES = ["Fitness", "Mo", "Pr", "Tr"]
 OUT_DIR = _PROJECT_ROOT / "path_performance_results"
-
-class _CompatHeNormal(tf.keras.initializers.HeNormal):
-    '''Some of these models were saved by a different Keras version whose HeNormal config
-    includes input_axes/output_axes kwargs that the currently installed Keras's HeNormal
-    doesn't accept -- drop anything HeNormal.__init__ doesn't recognize.'''
-
-    def __init__(self, seed=None, **kwargs):
-        super().__init__(seed=seed)
-
 
 CUSTOM_OBJECTS = {
     "KSparse": KSparse,

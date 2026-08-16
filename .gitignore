@@ -24,8 +24,9 @@ slprj/
 
 # Databese files
 *.csv
-*.xlsx
+*.txt
 *.json
+*.pkl
 
 # Output directories
 Model_for_every_path/

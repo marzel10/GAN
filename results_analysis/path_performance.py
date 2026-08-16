@@ -45,7 +45,7 @@ from CNN_AE import KSparse, ExpandLastDim, SqueezeLastDim
 from AE_train import monotonicity_loss
 from create_datastores import prepare_datastores
 from prognostic_criteria import monotonicity_criterion, trendability_criterion, prognosability_criterion
-from config import BASE_PANELS, DEFAULT_N_PIXELS, FREQUENCY_MAPPING, METRIC_NAMES, FOLD_KEYS, AE_RESULTS_DIR
+from config import BASE_PANELS, DEFAULT_N_PIXELS, FREQUENCY_MAPPING, LIFETIME_FRACTIONS, METRIC_NAMES, FOLD_KEYS, AE_RESULTS_DIR
 
 
 BO_folders = [f"Multi_path_BO_fixed_freq{i}" for i in range(6)]
@@ -370,7 +370,7 @@ def main(recompute=True):
     WAE_weights = fitness[:, :-1] / np.nansum(fitness, axis=1, keepdims=True)
     plot_metrics(metrics)
     plot_sHI_grid(sHI, weights=WAE_weights)
-    plot_damage_map_grid(panel_numbers=[103, 104, 105, 109, 123], fractions=(0.0, 0.25, 0.5, 0.75, 1.0),  n_pixels=DEFAULT_N_PIXELS, sHI=sHI, save_path=str(OUT_DIR / "WCPDI_AE_damage_maps_grid.svg"))
+    plot_damage_map_grid(panel_numbers=[103, 104, 105, 109, 123], fractions=LIFETIME_FRACTIONS,  n_pixels=DEFAULT_N_PIXELS, sHI=sHI, save_path=str(OUT_DIR / "WCPDI_AE_damage_maps_grid.svg"))
 
 
 if __name__ == "__main__":

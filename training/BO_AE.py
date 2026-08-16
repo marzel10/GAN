@@ -89,8 +89,7 @@ from config import (
 # Configure the run here:
 MODE = "single"            # "single" or "duo"
 MODEL_TYPE = "CNN_AE"    # used only when MODE == "single"  ("fc_AE" or "CNN_AE")
-PATHS = range(0, 28)
-FREQ_I = 5
+
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -667,17 +666,19 @@ def _run_one_path(path_i, freq_i, mode, model_type, max_trials, folder_name):
 
 
 def main():
-    folder_name = f"Multi_path_BO_fixed_freq{FREQ_I}"
-    ctx = multiprocessing.get_context("spawn")
+    
 
-    for PATH_I in range(24, 25):
-        log_mem(f"before path {PATH_I} (parent)")
-        p = ctx.Process(target=_run_one_path, args=(PATH_I, FREQ_I, MODE, MODEL_TYPE, MAX_TRIALS_GCN, folder_name))
-        p.start()
-        p.join()
-        if p.exitcode != 0:
-            raise RuntimeError(f"Subprocess for path {PATH_I} failed with exit code {p.exitcode}")
-        log_mem(f"after path {PATH_I} cleanup (parent)")  # should stay flat -- work happened in the child
+    for FREQ_I in range(0, 6):
+        folder_name = f"Multi_path_BO_fixed_freq{FREQ_I}"
+        ctx = multiprocessing.get_context("spawn")
+        for PATH_I in range(0, 28):
+            log_mem(f"before path {PATH_I} (parent)")
+            p = ctx.Process(target=_run_one_path, args=(PATH_I, FREQ_I, MODE, MODEL_TYPE, MAX_TRIALS_AE, folder_name))
+            p.start()
+            p.join()
+            if p.exitcode != 0:
+                raise RuntimeError(f"Subprocess for path {PATH_I} failed with exit code {p.exitcode}")
+            log_mem(f"after path {PATH_I} cleanup (parent)")  # should stay flat -- work happened in the child
 
 
 if __name__ == "__main__":

@@ -85,21 +85,21 @@ def extract_shi(folders, freq, dataset, GAN_dir=str(_PROJECT_ROOT)):
 
     return latents_all, path_labels, big_latent_all
 
+def pre_compute_AE_output():
+    for freq in range(0,6):
+        folders = [f"Multi_path_BO_fixed_freq{freq}\\Bayesian_CNN_AE_path{i}" for i in range(0, 28)]
+        datasets = BASE_PANELS + ["123"]
+    
+        for dataset in datasets:
+            latents_all, path_labels, big_latent_all = extract_shi(folders, freq, dataset)
+            print(f"Collected latents for {len(latents_all)} paths.")
+            print(f"Shape of latents matrix: {np.array(latents_all).shape}")
+            print(f"Shape of the path labels: {np.array(path_labels).shape}")
+            print(f"Big latent shape: {np.array(big_latent_all).shape}")
+
+            out_dict ={"shi": np.array(latents_all), "path_labels": np.array(path_labels), "big_latent": np.array(big_latent_all)}
+            folder = GRAPH_DATA_DIR / "raw"
+            torch.save(out_dict, os.path.join(folder, f"panel_{dataset}_shi_raw_{freq}.pt"))
 
 if __name__ == "__main__":
-
-    freq = 0
-    folders = [f"Multi_path_BO_fixed_freq{freq}\\Bayesian_CNN_AE_path{i}" for i in range(0, 28)]
-    datasets = BASE_PANELS + ["123"]
-
-   
-    for dataset in datasets:
-        latents_all, path_labels, big_latent_all = extract_shi(folders, freq, dataset)
-        print(f"Collected latents for {len(latents_all)} paths.")
-        print(f"Shape of latents matrix: {np.array(latents_all).shape}")
-        print(f"Shape of the path labels: {np.array(path_labels).shape}")
-        print(f"Big latent shape: {np.array(big_latent_all).shape}")
-
-        out_dict ={"shi": np.array(latents_all), "path_labels": np.array(path_labels), "big_latent": np.array(big_latent_all)}
-        folder = GRAPH_DATA_DIR / "raw"
-        torch.save(out_dict, os.path.join(folder, f"panel_{dataset}_shi_raw_{freq}.pt"))
+    pre_compute_AE_output()

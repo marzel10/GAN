@@ -395,15 +395,17 @@ class FeaturesExtractor(states):
                 print(f"Saved extracted features to {cache_file}")
 
             return out
-    
+
+def pre_compute_features_for_all_panels():
+    for freq in range(0, 6):
+        for panel_name in BASE_PANELS + PANEL_123_SUBPANELS:
+            mat_file = str(mat_file_path(panel_name))
+            extractor = FeaturesExtractor(mat_file)
+            sampling_rate = 1 / extractor.dt()
+            features = extractor.extract_all_features(s_idx=":", freq=freq, p_idx=":", sample_rate=sampling_rate, benchmark=False, diff=True, cache_dir=str(GRAPH_DATA_DIR / "raw"))
+            print(f"Extracted features shape for States_{panel_name}.mat: {features.shape}")
 
 
 if __name__ == "__main__":
-    for panel_name in BASE_PANELS + PANEL_123_SUBPANELS:
-        mat_file = str(mat_file_path(panel_name))
-        extractor = FeaturesExtractor(mat_file)
-        sampling_rate = 1 / extractor.dt()
-        features = extractor.extract_all_features(s_idx=":", freq=DEFAULT_FREQ_INDEX, p_idx=":", sample_rate=sampling_rate, benchmark=False, diff=True, cache_dir=str(GRAPH_DATA_DIR / "raw"))
-        print(f"Extracted features shape for States_{panel_name}.mat: {features.shape}")
-       
-   
+    pre_compute_features_for_all_panels()
+    

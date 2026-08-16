@@ -34,16 +34,15 @@ GCN_models/
 features_cache/
 graph_data/
 matlab_project/results/
-python_project/model_train_results/
 model_train_results/
 results_hype_tweaked/
-python_project/beta_paper
+beta_paper
 
 # Generated plots and animations
 *.png
 *.gif
 *.fig
-*.svg
+
 
 # Articles
 .pdf
@@ -55,7 +54,6 @@ git-status.txt
 
 # Excel outputs
 model_database.xlsx
-python_project/model_database.xlsx
 
 # IDE
 .vscode/

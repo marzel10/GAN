@@ -1,4 +1,4 @@
-# python_project
+# PZT SHM Pipeline
 
 Structural health monitoring pipeline for PZT sensor panels: raw signal data is turned
 into per-path health indices (sHI) via autoencoders and/or a graph convolutional

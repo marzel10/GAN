@@ -1,5 +1,5 @@
 """
-Central configuration for python_project.
+Central configuration for the SHM pipeline.
 """
 
 from itertools import combinations
@@ -10,7 +10,7 @@ import numpy as np
 # ===========================================================================
 # Paths
 # ===========================================================================
-PROJECT_ROOT = Path(__file__).resolve().parent  # .../GAN/python_project/
+PROJECT_ROOT = Path(__file__).resolve().parent  # .../GAN/
 
 # Data directories 
 DATA_DIR = PROJECT_ROOT / "data"                                                # raw states directory used by mat_file_path()

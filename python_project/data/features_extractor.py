@@ -1,5 +1,4 @@
 '''
-frequency domain features from vibration signals.
 This code implements extraction of 19 time domain features and 14 frequency domain
 features, each computed separately on the first and second half of the 4000-sample
 time signal (split evenly at the midpoint) -- 66 features total per state.
@@ -9,7 +8,7 @@ import sys
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
-for _sub in ("data", "models", "algorithms", "training", "viz", "scripts"):
+for _sub in ("data", "models", "tools", "training", "intermediate_results_check", "results_analysis"):
     _p = str(_PROJECT_ROOT / _sub)
     if _p not in sys.path:
         sys.path.insert(0, _p)
@@ -20,7 +19,7 @@ import numpy as np
 from states import states
 import tensorflow as tf
 import tensorflow_probability as tfp
-from config import BASE_PANELS, GRAPH_DATA_DIR, PANEL_123_SUBPANELS, mat_file_path, FEATURES_CACHE_DIR, DEFAULT_FREQ_INDEX
+from config import BASE_PANELS, GRAPH_DATA_DIR, PANEL_123_SUBPANELS, mat_file_path, DEFAULT_FREQ_INDEX
 
 class FeaturesExtractor(states):
     def __init__(self, mat_file):
@@ -33,13 +32,14 @@ class FeaturesExtractor(states):
         return self.benchmark_amplitude(s_idx, freq, p_idx) if benchmark else self.amplitude(s_idx, freq, p_idx)
 
     def _split_halves(self, amp):
-        '''Splits a time-domain signal into two equal halves along the time axis --
-        always the last axis, whether amp is (4000,) for a single state or
-        (n_states, 4000) for all states at once.'''
+        '''Splits a time-domain signal into two equal halves along the time axis, to extract features from each direction along the path'''
         n = amp.shape[-1]
         mid = n // 2
         return amp[..., :mid], amp[..., mid:]
 
+    # -------------------------------------------------------------- #
+    # Time domain features T1–T19 (Table A.13)                            #
+    # -------------------------------------------------------------- #
     def _skewness(self, amp):
         mean = tf.reduce_mean(amp, axis=-1, keepdims=True)
         std = tf.math.reduce_std(amp, axis=-1, keepdims=True)
@@ -60,8 +60,6 @@ class FeaturesExtractor(states):
         mean = tf.reduce_mean(amp, axis=-1, keepdims=True)
         return tf.reduce_mean(tf.pow(amp - mean, k), axis=-1)
 
-    # Time domain features -- each returns (feature_first_half, feature_second_half),
-    # computed separately on the two halves of the 4000-sample time signal (_split_halves).
     def extract_mean(self, s_idx, freq, p_idx, benchmark=False):
         half1, half2 = self._split_halves(self._get_amp(s_idx, freq, p_idx, benchmark))
         return tf.reduce_mean(half1, axis=-1), tf.reduce_mean(half2, axis=-1)
@@ -126,12 +124,12 @@ class FeaturesExtractor(states):
         feat2 = tf.reduce_max(half2, axis=-1) - tf.reduce_min(half2, axis=-1)
         return feat1, feat2
 
-    def exctract_k_central_moment(self, s_idx, freq, p_idx, k, benchmark=False):
+    def extract_k_central_moment(self, s_idx, freq, p_idx, k, benchmark=False):
         half1, half2 = self._split_halves(self._get_amp(s_idx, freq, p_idx, benchmark))
         return self._k_central_moment(half1, k), self._k_central_moment(half2, k)
 
     def extract_FM4(self, s_idx, freq, p_idx, benchmark=False):
-        k4_1, k4_2 = self.exctract_k_central_moment(s_idx, freq, p_idx, 4, benchmark=benchmark)
+        k4_1, k4_2 = self.extract_k_central_moment(s_idx, freq, p_idx, 4, benchmark=benchmark)
         std1, std2 = self.extract_std(s_idx, freq, p_idx, benchmark=benchmark)
         return k4_1 / tf.pow(std1, 4), k4_2 / tf.pow(std2, 4)
 
@@ -158,16 +156,6 @@ class FeaturesExtractor(states):
         s_k = np.abs(np.fft.rfft(x, axis=-1)) ** 2  # (..., N_f)
         f_k = np.fft.rfftfreq(N, d=1.0 / sample_rate)  # (N_f,)
         return f_k, s_k
-
-    # For all S-features:
-    #   f  : (N_f,)              — frequency axis
-    #   s  : (N_f,) or (B, N_f) — power spectrum, B = number of states
-    # Intermediate reductions use keepdims=True so they broadcast back with f.
-    # Final results are scalar or (B,).
-    #
-    # Each public extract_S*() computes the underlying formula separately on each half
-    # of the time signal (via _power_spectrum's half=1/2) and returns both results, same
-    # as the time-domain features above.
 
     def _S1(self, f, s):
         """S1 = mean(S)"""
@@ -407,27 +395,6 @@ class FeaturesExtractor(states):
                 print(f"Saved extracted features to {cache_file}")
 
             return out
-
-    @staticmethod
-    def normalize(train_feat, *other_feats):
-        """Z-score normalize using training set statistics.
-        Returns normalized train array and any additional arrays scaled by the same stats.
-        Features with zero or near-zero std (constant columns) are left as zeros.
-        """
-        mean = np.nanmean(train_feat, axis=0)   # ignore NaN when computing stats
-        std  = np.nanstd(train_feat, axis=0)
-        std[std < 1e-10] = 1.0                  # catch both zero and near-zero std
-
-        bad_cols = np.where(np.isnan(mean) | np.isnan(std))[0]
-        if bad_cols.size:
-            print(f"[normalize] {bad_cols.size} all-NaN columns (indices {bad_cols}) — set to 0")
-            mean[bad_cols] = 0.0
-            std[bad_cols]  = 1.0
-
-        normed = [(arr - mean) / std for arr in (train_feat, *other_feats)]
-        normed = [np.nan_to_num(a, nan=0.0, posinf=0.0, neginf=0.0) for a in normed]
-        normed = [np.clip(a, -10, 10) for a in normed]
-        return normed if other_feats else normed[0]
     
 
 

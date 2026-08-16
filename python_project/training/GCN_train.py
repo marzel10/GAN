@@ -4,15 +4,13 @@ This file defines the training loop for the GCN model. It includes:
 - the train function that sets up the model, loads the datasets, and runs the training loop with optional validation
 - a plot_HI function to visualize the learned health index against the states after training
 
-There is no cross validation implemented yet, only a single validation panel. The training and validation panels can be specified in the train function arguments.
-You can train either with the big latent (the one used for reconstruction) or the sHI latent (the one we want to use for the GCN) by setting the big_latent argument in the train function. The default is False (train with sHI latent).
 '''
 
 import sys
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
-for _sub in ("data", "models", "algorithms", "training", "viz", "scripts"):
+for _sub in ("data", "models", "tools", "training", "intermediate_results_check", "results_analysis"):
     _p = str(_PROJECT_ROOT / _sub)
     if _p not in sys.path:
         sys.path.insert(0, _p)
@@ -22,28 +20,25 @@ if str(_PROJECT_ROOT) not in sys.path:
 import datetime
 import os
 
-from GCN import GraphCNN
-from graph_dataset import Panel_GraphDataset, features_GraphDataset
+from GCN import DeepGraphCNN
+from graph_dataset import features_GraphDataset
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import torch_geometric
-from imagining_alghoritm import  animate_panel_sidebyside, optimal_beta, MAX_DIST, U as _wcpdi_U, find_threshold as _wcpdi_find_threshold
-from plot_panel import SENSOR_POSITIONS, SENSOR_PAIRS, DAMAGE_POINTS, PANEL_W, PANEL_H
+from imagining_alghoritm import optimal_beta, MAX_DIST, U as _wcpdi_U
 from config import (
-    TOTAL_STATES, GCN_MODELS_DIR, GRAPH_DATA_DIR, CROSS_VALIDATION_RESULTS_DIR,
-    DEFAULT_FREQ_INDEX, DEFAULT_WCPDI_C, DEFAULT_WCPDI_BETA, DEFAULT_N_PIXELS,
+    BETA_CONSTANT, DEFAULT_BATCH_SIZE, EPOCHS_PER_FOLD_GCN, GCN_MODELS_DIR, GRAPH_DATA_DIR, CROSS_VALIDATION_RESULTS_DIR,
+    DEFAULT_FREQ_INDEX,
     DEFAULT_N_FEATURES, BASE_PANELS,
+    SENSOR_POSITIONS, SENSOR_PAIRS, DAMAGE_POINTS, PANEL_W, PANEL_H, VAL_PANELS, LR
 )
 
 def monotonicity_loss(values, state_ids, panel_ids):
-    # values:    (batch_size, k) — one or more scalars per graph (e.g. HI, or per-path outputs)
+    # values:    (batch_size, k) — one or more scalars per graph (1 x HI or 28 sub-HI)
     # state_ids: (batch_size,)   — true damage-state index of each graph
     # panel_ids: (batch_size,)   — panel identity of each graph (state_ids restart at 0 per panel)
-    #
-    # Enforces a drop of 10 between *truly consecutive* states (same panel, state
-    # index differs by exactly 1), regardless of the order samples arrived in the
-    # batch (DataLoader shuffling means batch order is not state order).
+   
     values = values.reshape(values.shape[0], -1)
     loss = values.sum() * 0.0
     for panel in panel_ids.unique():
@@ -65,19 +60,6 @@ def monotonicity_loss(values, state_ids, panel_ids):
         loss = loss + (((diff + 10.0) ** 2) - 100.0).sum()
     return loss
 
-
-
-def combined_monotonicity_loss(HI, out, state_ids, panel_ids):
-    # HI:  (batch_size, 1)          — graph-level health index
-    # out: (batch_size * num_paths, 1) — per-node outputs, ordered by graph then node
-    batch_size = HI.shape[0]
-    num_paths = out.shape[0] // batch_size          # 28 for a 28-node graph
-    path_out = out.reshape(batch_size, num_paths)   # (batch_size, 28)
-
-    global_loss = monotonicity_loss(HI, state_ids, panel_ids)
-    path_loss = monotonicity_loss(path_out, state_ids, panel_ids)
-    return global_loss + path_loss
-
 def combined_path_loss(HI, out, state_ids, panel_ids):
     # HI:  (batch_size, 1)          — graph-level health index
     # out: (batch_size * num_paths, 1) — per-node outputs, ordered by graph then node
@@ -89,14 +71,10 @@ def combined_path_loss(HI, out, state_ids, panel_ids):
 
 _DAMAGE_MAP_GEOMETRY_CACHE = {}
 
-def _damage_map_geometry(n_pixels):
-    # U()/find_threshold() are reused as-is from imagining_alghoritm.py: they only
-    # depend on panel geometry, not on the model's sHI output, so there's nothing
-    # to backprop through here. The per-path weight maps (W_stack) are re-derived
-    # with the same formula as U()'s internal loop, but kept as torch tensors so
-    # the sHI-weighted P map below stays differentiable.
-    key = (n_pixels)
-    if key in _DAMAGE_MAP_GEOMETRY_CACHE:
+def _damage_map_geometry(n_pixels, beta_constant=BETA_CONSTANT):
+   
+    key = (n_pixels, beta_constant)
+    if key in _DAMAGE_MAP_GEOMETRY_CACHE: # Check if the weights have already been computed for this n_pixels and beta_constant
         return _DAMAGE_MAP_GEOMETRY_CACHE[key]
 
     dA = (PANEL_W * PANEL_H) / n_pixels
@@ -116,7 +94,7 @@ def _damage_map_geometry(n_pixels):
         d1 = np.sqrt((X - p1[0]) ** 2 + (Y - p1[1]) ** 2)
         d2 = np.sqrt((X - p2[0]) ** 2 + (Y - p2[1]) ** 2)
         d = np.sqrt(((p1 - p2) ** 2).sum())
-        path_beta = optimal_beta(d, MAX_DIST)
+        path_beta = optimal_beta(d, MAX_DIST,beta_constant)
         R = (d1 + d2) / d - 1
         W_maps.append(np.where(R < path_beta, 1 - R / path_beta, 0.0))
     W_stack = np.stack(W_maps, axis=0)  # (num_paths, nx, ny)
@@ -125,38 +103,28 @@ def _damage_map_geometry(n_pixels):
     _DAMAGE_MAP_GEOMETRY_CACHE[key] = result
     return result
 
-def damage_map_loss(out, state_ids, panel_ids, n_pixels=400):
-    # out:       (batch_size * num_paths, 1) — per-path sHI predictions, ordered graph then path
-    # panel_ids: (batch_size,) — panel identity of each graph, used to look up its damage point
-    #
-    # Builds the WCPDI spatial map (same weighting scheme as imagining_alghoritm's
-    # P/U/WCPDI) from the model's own per-path sHI predictions, then penalizes the
-    # map value at the panel's known damage point relative to the map's mean --
-    # using the same margin-of-10 scheme as monotonicity_loss (sHI runs
-    # high=healthy/low=damaged, so the damage point should sit ~10 below the mean).
+def damage_map_loss(out, panel_ids, n_pixels=1000, beta=BETA_CONSTANT):
     out = out.reshape(-1)
     num_paths = len(SENSOR_PAIRS)
     batch_size = out.shape[0] // num_paths
     path_out = out.reshape(batch_size, num_paths)
 
-    dx, U_arr, peak_U, W_stack = _damage_map_geometry(n_pixels)
+    
+    dx, U_arr, peak_U, W_stack = _damage_map_geometry(n_pixels,beta_constant=beta)
     W_stack = torch.tensor(W_stack, dtype=out.dtype, device=out.device)
     U_map = torch.tensor(U_arr, dtype=out.dtype, device=out.device)
 
-    # Pixels outside every sensor path's ellipse of influence have U == 0 (no
-    # coverage), so WCPDI is undefined there -- dividing by them produces inf/nan
-    # that would otherwise contaminate mean_WCPDI. Exclude them from the mean via
-    # a safe denominator + boolean mask (each excluded pixel is elementwise
-    # independent, so masking it out of the mean doesn't touch other pixels' grad).
-    valid_mask = U_map > 0
+    valid_mask = U_map > 0 # Check which pixels are under the influence of at least one sensor path
     U_safe = torch.where(valid_mask, U_map, torch.ones_like(U_map))
 
     loss = out.sum() * 0.0
     for i in range(batch_size):
         panel_number = int(panel_ids[i].item())
 
-        P_map = (path_out[i].view(-1, 1, 1) * W_stack).sum(dim=0)
+        # multiply sub-HI by its path's W map, then sum over all paths to get the panel's P map
+        P_map = (path_out[i].view(-1, 1, 1) * W_stack).sum(dim=0) 
         WCPDI_map = P_map  / (U_safe / peak_U)
+
         mean_WCPDI = WCPDI_map[valid_mask].mean()
 
         damage_point = DAMAGE_POINTS[panel_number]
@@ -167,10 +135,7 @@ def damage_map_loss(out, state_ids, panel_ids, n_pixels=400):
         damage_WCPDI = WCPDI_map[ix, iy]
 
         diff = damage_WCPDI - mean_WCPDI
-        if state_ids[i] < TOTAL_STATES.get(str(panel_number), 0)*0:
-            continue
-        else:
-            loss = loss + ((diff + 10.0) ** 2 - 100.0)
+        loss = loss + ((diff + 10.0) ** 2 - 100.0)
 
     return loss
 
@@ -231,122 +196,15 @@ def plot_training_history(hist_dict, nr_epochs,save_dir=None):
     else:
         plt.show()
 
-def train(f=DEFAULT_FREQ_INDEX,val_panel=109,n_epochs=100,batch_size=15,lr=0.01,out_folder=str(GCN_MODELS_DIR),big_latent=False, seed=42):
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    torch.manual_seed(seed)
-    if big_latent:
-        num_node_features = 15
-    else:
-        num_node_features = 1
-    model = GraphCNN(num_node_features=num_node_features).to(device)
 
-    dataset_103 = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=103, freq=f, big_latent=big_latent)
-    dataset_104 = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=104, freq=f, big_latent=big_latent)
-    dataset_105 = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=105, freq=f, big_latent=big_latent)
 
-    dataset_109 = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=109, freq=f, big_latent=big_latent)
-    
-    dict_datasets = {"103": dataset_103, "104": dataset_104, "105": dataset_105, "109": dataset_109}
-    val_dataset = dict_datasets[str(val_panel)]
-
-    dataset = [dataset for key, dataset in dict_datasets.items() if key != str(val_panel)]
-    dataset = torch.utils.data.ConcatDataset(dataset)
-    loader = torch_geometric.loader.DataLoader(dataset, batch_size=batch_size, shuffle=True)
-    val_loader = torch_geometric.loader.DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    loss_history = torch.zeros(n_epochs)
-    global_loss_history = torch.zeros(n_epochs)
-    path_loss_history = torch.zeros(n_epochs)
-    val_loss_history = torch.zeros(n_epochs)
-    global_val_loss_history = torch.zeros(n_epochs)
-    path_val_loss_history = torch.zeros(n_epochs)
-
-    epochs_done = 0
-
-    for epoch in range(n_epochs):
-        model.train()
-        total_loss = 0
-        total_global_loss = 0
-        total_path_loss = 0
-        for data in loader:
-            data = data.to(device)
-
-            optimizer.zero_grad()
-            out, HI = model(data.x, data.edge_index, data.batch, data.edge_weight)
-
-            global_loss = monotonicity_loss(HI, data.y, data.panel)
-            path_loss = combined_path_loss(HI, out, data.y, data.panel)
-            loss  = combined_monotonicity_loss(HI, out, data.y, data.panel)
-            #loss = global_loss + path_loss
-
-            loss.backward()
-            optimizer.step()
-            total_loss += loss.item()
-            total_global_loss += global_loss.item()
-            total_path_loss += path_loss.item()
-        avg_loss = total_loss / len(loader)
-        avg_global_loss = total_global_loss / len(loader)
-        avg_path_loss = total_path_loss / len(loader)
-
-        # Validation
-        model.eval()
-        with torch.no_grad():
-            total_val_loss = 0
-            total_global_val_loss = 0
-            total_path_val_loss = 0
-            for val_data in val_loader:
-                val_data = val_data.to(device)
-                out_val, HI_val = model(val_data.x.to(device), val_data.edge_index.to(device), val_data.batch.to(device), val_data.edge_weight.to(device))
-
-                global_val_loss = monotonicity_loss(HI_val, val_data.y, val_data.panel)
-                path_val_loss = combined_path_loss(HI_val, out_val, val_data.y, val_data.panel)
-                #loss_val = global_val_loss + path_val_loss
-                loss_val = combined_monotonicity_loss(HI_val, out_val, val_data.y, val_data.panel)
-
-                total_val_loss += loss_val.item()
-                total_global_val_loss += global_val_loss.item()
-                total_path_val_loss += path_val_loss.item()
-            avg_val_loss = total_val_loss / len(val_loader)
-            avg_global_val_loss = total_global_val_loss / len(val_loader)
-            avg_path_val_loss = total_path_val_loss / len(val_loader)
-
-        loss_history[epoch] = avg_loss
-        global_loss_history[epoch] = avg_global_loss
-        path_loss_history[epoch] = avg_path_loss
-        global_val_loss_history[epoch] = avg_global_val_loss
-        path_val_loss_history[epoch] = avg_path_val_loss
-        val_loss_history[epoch] = avg_val_loss
-        print(f'Epoch {epoch+1}, Loss: {avg_loss:.4f}, Val Loss: {avg_val_loss:.4f}')
-        epochs_done += 1
-
-    history_dict = {
-        'loss_history': loss_history,
-        'global_loss_history': global_loss_history,
-        'path_loss_history': path_loss_history,
-        'val_loss_history': val_loss_history,
-        'global_val_loss_history': global_val_loss_history,
-        'path_val_loss_history': path_val_loss_history}
-
-    plot_training_history(history_dict, epochs_done)
-   
-
-    out_folder = out_folder
-    if not os.path.exists(out_folder):
-        os.makedirs(out_folder)
-
-    if big_latent:
-        torch.save(model, os.path.join(out_folder, "gcn_big_latent.pt"))
-    else:
-        torch.save(model, os.path.join(out_folder, "gcn.pt"))
-
-def train_with_features(f=DEFAULT_FREQ_INDEX,val_panel=109,n_epochs=100,batch_size=15,lr=0.01,out_folder=str(GCN_MODELS_DIR), net_name="gcn_features.pt", cross_validation=False, seed=42):
+def train_with_features(f=DEFAULT_FREQ_INDEX,val_panel=VAL_PANELS,n_epochs=EPOCHS_PER_FOLD_GCN,batch_size=DEFAULT_BATCH_SIZE,lr=LR,out_folder=str(GCN_MODELS_DIR), net_name="gcn_features.pt", cross_validation=False, seed=42):
     if not os.path.exists(out_folder):
         os.makedirs(out_folder)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     torch.manual_seed(seed)
     num_node_features = DEFAULT_N_FEATURES
-    model = GraphCNN(num_node_features=num_node_features).to(device)
+    model = DeepGraphCNN(num_node_features=num_node_features).to(device)
 
     dataset_103 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=103, freq=f)
     dataset_104 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=104, freq=f)
@@ -387,7 +245,6 @@ def train_with_features(f=DEFAULT_FREQ_INDEX,val_panel=109,n_epochs=100,batch_si
 
     epochs_done = 0
 
-
     for epoch in range(n_epochs):
         model.train()
         total_loss = 0
@@ -402,9 +259,9 @@ def train_with_features(f=DEFAULT_FREQ_INDEX,val_panel=109,n_epochs=100,batch_si
 
             global_loss = monotonicity_loss(HI, data.y, data.panel)
             path_loss = combined_path_loss(HI, out, data.y, data.panel)
-            damage_loss = damage_map_loss(out, data.y, data.panel)
+            damage_loss = damage_map_loss(out, data.panel)
             loss = global_loss + path_loss #+ damage_loss
-            #loss = combined_monotonicity_loss(HI, out, data.y, data.panel)
+
 
             loss.backward()
             optimizer.step()
@@ -431,10 +288,8 @@ def train_with_features(f=DEFAULT_FREQ_INDEX,val_panel=109,n_epochs=100,batch_si
 
                 global_val_loss = monotonicity_loss(HI_val, val_data.y, val_data.panel)
                 path_val_loss = combined_path_loss(HI_val, out_val, val_data.y, val_data.panel)
-                damage_val_loss = damage_map_loss(out_val, val_data.y, val_data.panel)
+                damage_val_loss = damage_map_loss(out_val,  val_data.panel)
                 loss_val = global_val_loss + path_val_loss #+ damage_val_loss
-                #loss_val = combined_monotonicity_loss(HI_val, out_val, val_data.y, val_data.panel)
-
 
                 total_val_loss += loss_val.item()
                 total_global_val_loss += global_val_loss.item()
@@ -484,14 +339,7 @@ def train_with_features(f=DEFAULT_FREQ_INDEX,val_panel=109,n_epochs=100,batch_si
 
 
 class EnsembleGCN(torch.nn.Module):
-    """Wraps N cross-validation GCN models into one module.
-
-    Each sub-model has its own normalization stats (feature_mean / feature_std).
-    forward() normalizes x separately for each sub-model, averages the HI outputs,
-    and also returns the per-model standard deviation as uncertainty estimate.
-    Accepts raw (unnormalized) node features — do NOT apply a transform to the
-    dataset when using this model.
-    """
+    """Wraps N cross-validation GCN models into one module"""
     def __init__(self, checkpoints):
         # checkpoints: list of {'model', 'feature_mean', 'feature_std'} dicts
         super().__init__()
@@ -536,10 +384,6 @@ def ensemble_predict(datasets, test_dataset, model_path, save_dir=None):
     states_per_dataset = [None] * n
 
     for model_file in sorted(os.listdir(model_path)):
-        # Skip a leftover ensemble_model.pt from a previous run in this same
-        # directory -- it's a raw EnsembleGCN module, not a {'model',...}
-        # checkpoint dict, so it can't be unpacked the same way (see the same
-        # exclusion in build_and_save_ensemble).
         if not model_file.endswith('.pt') or model_file == 'ensemble_model.pt':
             continue
         checkpoint = torch.load(os.path.join(model_path, model_file), weights_only=False)
@@ -690,22 +534,16 @@ def plot_sHI(model, dataset, path_idx):
 
 
 if __name__ == "__main__":
-    features = True
-    bl =True
+
+  
     validation_panels = [int(p) for p in BASE_PANELS]
 
-    if features: 
-        dataset_103 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=103, freq=DEFAULT_FREQ_INDEX)
-        dataset_104 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=104, freq=DEFAULT_FREQ_INDEX)
-        dataset_105 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=105, freq=DEFAULT_FREQ_INDEX)
-        dataset_109 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=109, freq=DEFAULT_FREQ_INDEX)
-        dataset_123 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=123, freq=DEFAULT_FREQ_INDEX)
-    else:
-        dataset_103 = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=103, freq=DEFAULT_FREQ_INDEX, big_latent=bl)
-        dataset_104 = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=104, freq=DEFAULT_FREQ_INDEX, big_latent=bl)
-        dataset_105 = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=105, freq=DEFAULT_FREQ_INDEX, big_latent=bl)
-        dataset_109 = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=109, freq=DEFAULT_FREQ_INDEX, big_latent=bl)
-        dataset_123 = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=123, freq=DEFAULT_FREQ_INDEX, big_latent=bl)
+   
+    dataset_103 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=103, freq=DEFAULT_FREQ_INDEX)
+    dataset_104 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=104, freq=DEFAULT_FREQ_INDEX)
+    dataset_105 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=105, freq=DEFAULT_FREQ_INDEX)
+    dataset_109 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=109, freq=DEFAULT_FREQ_INDEX)
+    dataset_123 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=123, freq=DEFAULT_FREQ_INDEX)
 
     dataset_dict = {
         103: dataset_103,
@@ -721,17 +559,9 @@ if __name__ == "__main__":
         os.makedirs(output_dir)
 
     for val_panel in validation_panels:
-        if features:
-            model_name = "gcn_features_val_" + str(val_panel) + ".pt"
-            train_with_features(batch_size=30, val_panel=val_panel, net_name=model_name, n_epochs=800, lr=0.001, out_folder=output_dir, cross_validation=True, seed=42)
-            
-        else:
-            train(big_latent=bl, val_panel=val_panel, lr=0.0001, n_epochs=1000)
-            if bl: 
-                model_name = "gcn_big_latent.pt"
-            else:
-                model_name = "gcn.pt"
-            
+        
+        model_name = "gcn_features_val_" + str(val_panel) + ".pt"
+        train_with_features(batch_size=30, val_panel=val_panel, net_name=model_name, n_epochs=800, lr=0.001, out_folder=output_dir, cross_validation=True, seed=42)
 
         bundle = torch.load(f"{output_dir}/{model_name}", weights_only=False)
        
@@ -758,15 +588,8 @@ if __name__ == "__main__":
     ensemble_model_path = os.path.join(output_dir, "ensemble_model.pt")
     build_and_save_ensemble(output_dir, ensemble_model_path)
 
-    # Create 5 animation of panels using the ensemble model
-    ensemble_model = torch.load(ensemble_model_path, weights_only=False)
-    animate_panel_sidebyside(panel_number=103, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, beta=DEFAULT_WCPDI_BETA, transform=None, output_dir=output_dir, file_name=f"WCPDI_panel_103")
-    animate_panel_sidebyside(panel_number=104, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, beta=DEFAULT_WCPDI_BETA, transform=None, output_dir=output_dir, file_name=f"WCPDI_panel_104")
-    animate_panel_sidebyside(panel_number=105, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, beta=DEFAULT_WCPDI_BETA, transform=None, output_dir=output_dir, file_name=f"WCPDI_panel_105")
-    animate_panel_sidebyside(panel_number=109, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, beta=DEFAULT_WCPDI_BETA, transform=None, output_dir=output_dir, file_name=f"WCPDI_panel_109")
-    animate_panel_sidebyside(panel_number=123, model=ensemble_model, n_pixels=DEFAULT_N_PIXELS, beta=DEFAULT_WCPDI_BETA, transform=None, output_dir=output_dir, file_name=f"WCPDI_panel_123")
+    # plot sHI for an example path 
+    example_path_idx = 0  # Change this index to plot sHI for a different path
+    plot_sHI(model, dataset_123, example_path_idx)
+
     
-        # shi Plots for example paths
-        # plot_sHI(model, dataset_109, path_idx=0)
-        # plot_sHI(model, dataset_103, path_idx=0)
-        # plot_sHI(model, dataset_123, path_idx=0)    

@@ -1,9 +1,6 @@
 """
 Bayesian hyperparameter optimization for DeepGraphCNN (models/GCN.py), trained via a
-leave-one-out cross-validation loop over BASE_PANELS -- mirrors BO_features.py's
-structure (same kt.BayesianOptimization subclass-and-override-run_trial pattern), but
-drives a PyTorch/torch_geometric training loop instead of a TF one; KerasTuner's HP
-sampling / Bayesian search core doesn't care what run_trial actually does internally.
+leave-one-out cross-validation loop over BASE_PANELS
 
 Hyperparameters tuned:
     - batch_size, learning_rate
@@ -11,7 +8,7 @@ Hyperparameters tuned:
       between the fixed 24-dim input compression and the final scalar output layer
     - hidden_dim: width of that hidden layer (only used when nr_hidden_channels == 1,
       but always registered as an hp -- see get_hidden_dim_hp)
-    - dropout
+    - dropout: dropout probability for the hidden layer 
 
 Fixed (not tuned):
     - num_node_features: always DEFAULT_GCN_FEATURES (the AE's latent_dim -- every
@@ -23,14 +20,6 @@ Fixed (not tuned):
 Search objective: "Objective" (direction="max") =
     mean_fitness - DAMAGE_LOSS_WEIGHT * mean_damage_loss
 where mean_fitness is a*monotonicity + b*trendability + c*prognosability
-(prognostic_criteria.py) computed from each fold's trained model's own HI predictions
-across CV_PANELS, and mean_damage_loss is GCN_train.damage_map_loss evaluated on that
-fold's held-out validation panel. damage_map_loss is unbounded (not a small fixed-scale
-criterion like fitness), so DAMAGE_LOSS_WEIGHT is a small fixed weight -- check the
-printed mean_damage_loss magnitude for your data and adjust it if one term ends up
-silently dominating the other. mean_train_loss/mean_val_loss (global_loss + path_loss,
-the actual backprop'd training loss) are also tracked every trial purely as training
-diagnostics (plotted, don't drive the search) -- same convention as BO_features.py.
 
 After the search: retrains one model per CV_PANELS fold with the best hyperparameters
 (saving each as a GCN_train.py-compatible checkpoint dict), builds + saves an
@@ -43,7 +32,7 @@ from functools import partial
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
-for _sub in ("data", "models", "algorithms", "training", "viz", "scripts"):
+for _sub in ("data", "models", "tools", "training", "intermediate_results_check", "results_analysis"):
     _p = str(_PROJECT_ROOT / _sub)
     if _p not in sys.path:
         sys.path.insert(0, _p)
@@ -67,28 +56,19 @@ from GCN_train import (
 )
 from prognostic_criteria import monotonicity_criterion, trendability_criterion, prognosability_criterion
 from config import (
-    GRAPH_DATA_DIR, BO_TUNER_DIR, BO_SEARCH_RESULTS_DIR,
-    BASE_PANELS, DEFAULT_FREQ_INDEX, DEFAULT_GCN_FEATURES, DEFAULT_N_FEATURES
+    BETA_CONSTANT, ENABLE_DAMAGE_LOSS, GRAPH_DATA_DIR, BO_TUNER_DIR, BO_SEARCH_RESULTS_DIR,
+    BASE_PANELS, DEFAULT_FREQ_INDEX, DEFAULT_GCN_FEATURES, DEFAULT_N_FEATURES, EPOCHS_PER_FOLD_GCN, CV_PANELS, MAX_TRIALS_GCN, TEST_PANEL, RAW_FEATURES, DAMAGE_LOSS_WEIGHT,
 )
 
-CV_PANELS = [int(p) for p in BASE_PANELS]
-TEST_PANEL = 123  # external test panel, mirrors GCN_train.py's own __main__ convention
-EPOCHS_PER_FOLD = 200
+CV_PANELS_INT = [int(p) for p in CV_PANELS] 
+TEST_PANEL_INT = int(TEST_PANEL) 
 
-DAMAGE_LOSS_WEIGHT = 0.01  # small fixed weight; damage_map_loss is unbounded, fitness is ~0-3 -- check magnitudes and adjust
-TYPE = "basic"  # default adjacency matrix type for Panel_GraphDataset (see graph_dataset.py) -- "basic", "by_area", "geometry", or "peak"
-RAW_FEATURES = True  # default: if True, uses features_GraphDataset instead of Panel_GraphDataset (raw frequency features instead of AE latent features) -- see graph_dataset.py
+TYPE = "basic"  # default adjacency matrix type 
+RAW_FEATURES = False  # default to using AE latent features, not raw features
 HP_COLS = ["batch_size", "learning_rate", "nr_hidden_channels", "hidden_dim", "dropout"]
 
 
 def _input_dims(raw_features):
-    """(num_node_features, input_compress_dim) for the given raw_features toggle --
-    both are the same value (raw features are wider than the AE latent, so
-    "compressing" to that same width is really just a learned Linear+LeakyReLU
-    ahead of the GCN stack, not an actual dimensionality reduction). Computed from
-    the *argument*, not the RAW_FEATURES global, so build_model/_build_from_params
-    build the right-shaped model for whatever a given sweep call actually asked for.
-    """
     n = DEFAULT_N_FEATURES if raw_features else DEFAULT_GCN_FEATURES
     return n, n
 
@@ -109,11 +89,8 @@ def get_nr_hidden_channels_hp(hp, raw_features):
 
 
 def get_hidden_dim_hp(hp, raw_features):
-    # Always registered regardless of nr_hidden_channels's sampled value -- KerasTuner
-    # locks an hp's bounds to whatever was seen on its FIRST registration for the whole
-    # search (see BO_features.py's get_k_sparse_frac_hp for the same issue hit before).
-    # Simply unused in build_model when nr_hidden_channels == 0.
-    if raw_features:
+    # Unused in build_model when nr_hidden_channels == 0.
+    if raw_features: # make bigger model for raw features
         return hp.Int("hidden_dim", min_value=32, max_value=128, step=8)
     return hp.Int("hidden_dim", min_value=8, max_value=64, step=8)
 
@@ -139,9 +116,7 @@ def build_model(hp, raw_features=RAW_FEATURES):
 
 
 def _build_from_params(params, raw_features=RAW_FEATURES):
-    """Same as build_model, but from a plain {hp_name: value} dict (e.g.
-    best.hyperparameters.values) instead of a live kt.HyperParameters object --
-    used by the post-search retrain loop."""
+    """Same as build_model, but from a plain {hp_name: value}, used by the post-search retrain loop."""
     num_node_features, input_compress_dim = _input_dims(raw_features)
     hidden_channels = (params["hidden_dim"],) if params["nr_hidden_channels"] == 1 else ()
     return DeepGraphCNN(
@@ -155,9 +130,6 @@ def _build_from_params(params, raw_features=RAW_FEATURES):
 
 # ─── Fitness (prognostic_criteria.py) ────────────────────────────────────────────
 def _collect_HI(model, dataset, device):
-    """HI predictions in increasing-state order for one panel's dataset (never
-    shuffled here), matching the DI format monotonicity/trendability/prognosability
-    criteria expect."""
     loader = torch_geometric.loader.DataLoader(dataset, batch_size=32, shuffle=False)
     all_HI, all_states = [], []
     model.eval()
@@ -173,8 +145,6 @@ def _collect_HI(model, dataset, device):
 
 
 def fitness_objective(model, datasets, device, a=1.0, b=1.0, c=1.0):
-    """Higher is better. trendability_criterion needs >= 2 panels to correlate
-    against each other, so `datasets` should be the full CV panel set."""
     DI = [_collect_HI(model, ds, device) for ds in datasets]
     monotonicity = monotonicity_criterion(DI)
     trendability = trendability_criterion(DI)
@@ -185,14 +155,16 @@ def fitness_objective(model, datasets, device, a=1.0, b=1.0, c=1.0):
 # ─── Custom tuner ─────────────────────────────────────────────────────────────
 class MyGCNTuner(kt.BayesianOptimization):
     def __init__(self, *args, freq=DEFAULT_FREQ_INDEX, cv_panels=None,
-                 epochs_per_fold=EPOCHS_PER_FOLD, type=TYPE, raw_features=RAW_FEATURES, **kwargs):
+                 epochs_per_fold=EPOCHS_PER_FOLD_GCN, type=TYPE, raw_features=RAW_FEATURES, beta=BETA_CONSTANT, damage_loss= ENABLE_DAMAGE_LOSS, **kwargs):
         super().__init__(*args, **kwargs)
         self.freq = freq
-        self.cv_panels = cv_panels or CV_PANELS
+        self.cv_panels = cv_panels or CV_PANELS_INT
         self.epochs_per_fold = epochs_per_fold
         self.type = type
         self.raw_features = raw_features
+        self.beta = beta
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.damage_loss = damage_loss
 
     def run_trial(self, trial, *args, **kwargs):
         hp = trial.hyperparameters
@@ -206,7 +178,7 @@ class MyGCNTuner(kt.BayesianOptimization):
             }
         else:
             datasets = {
-                panel: Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=panel, freq=self.freq, big_latent=True, type=self.type)
+                panel: Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=panel, freq=self.freq, big_latent=True, type=self.type, beta_constant=self.beta)
                 for panel in self.cv_panels
             }
 
@@ -235,8 +207,15 @@ class MyGCNTuner(kt.BayesianOptimization):
                     data = data.to(self.device)
                     optimizer.zero_grad()
                     out, HI = model(data.x, data.edge_index, data.batch, data.edge_weight)
-                    loss = (monotonicity_loss(HI, data.y, data.panel)
-                            + combined_path_loss(HI, out, data.y, data.panel)+ damage_map_loss(out, data.y, data.panel))
+
+                    if self.damage_loss:
+                        loss = (monotonicity_loss(HI, data.y, data.panel)
+                                + combined_path_loss(HI, out, data.y, data.panel)
+                                + damage_map_loss(out, data.panel, beta=self.beta))
+                    else:
+                        loss = (monotonicity_loss(HI, data.y, data.panel)
+                                + combined_path_loss(HI, out, data.y, data.panel))
+                    
                     loss.backward()
                     optimizer.step()
                     total_train_loss += loss.item()
@@ -250,8 +229,13 @@ class MyGCNTuner(kt.BayesianOptimization):
                     for data in val_loader:
                         data = data.to(self.device)
                         out, HI = model(data.x, data.edge_index, data.batch, data.edge_weight)
-                        loss = (monotonicity_loss(HI, data.y, data.panel)
-                                + combined_path_loss(HI, out, data.y, data.panel)+ damage_map_loss(out, data.y, data.panel))
+                        if self.damage_loss:
+                            loss = (monotonicity_loss(HI, data.y, data.panel)
+                                    + combined_path_loss(HI, out, data.y, data.panel)
+                                    + damage_map_loss(out, data.panel, beta=self.beta))
+                        else:
+                            loss = (monotonicity_loss(HI, data.y, data.panel)
+                                    + combined_path_loss(HI, out, data.y, data.panel))
                         total_val_loss += loss.item()
                         n_val_batches += 1
                 avg_val_loss = total_val_loss / max(n_val_batches, 1)
@@ -279,7 +263,7 @@ class MyGCNTuner(kt.BayesianOptimization):
                 for data in val_loader:
                     data = data.to(self.device)
                     out, _ = model(data.x, data.edge_index, data.batch, data.edge_weight)
-                    total_damage_loss += damage_map_loss(out, data.y, data.panel).item()
+                    total_damage_loss += damage_map_loss(out,  data.panel, beta=self.beta).item()
                     n_batches += 1
             fold_damage.append(total_damage_loss / max(n_batches, 1))
 
@@ -305,23 +289,20 @@ class MyGCNTuner(kt.BayesianOptimization):
 
 
 # ─── Retrain (best hyperparameters, one model per CV fold) ────────────────────
-def _retrain_fold(best_params, val_panel, freq, out_dir, epochs, seed=42, type=TYPE, raw_features=RAW_FEATURES):
-    """Retrain one leave-one-out fold with the given (best) hyperparameter values.
-    Saves a GCN_train.py-compatible checkpoint dict ({'model','feature_mean',
-    'feature_std'}) so build_and_save_ensemble / ensemble_predict / plot_HI all work
-    on it unmodified, plus a learning-curve plot via GCN_train.plot_training_history.
-    """
+def _retrain_fold(best_params, val_panel, freq, out_dir, epochs, seed=42, type=TYPE, raw_features=RAW_FEATURES,beta=BETA_CONSTANT, add_damage_loss=ENABLE_DAMAGE_LOSS):
+    """Retrain one leave-one-out fold with the given (best) hyperparameter values."""
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     torch.manual_seed(seed)
 
     if raw_features:
-        datasets = {p: features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=p, freq=freq) for p in CV_PANELS}
-        test_dataset = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=TEST_PANEL, freq=freq)
+        datasets = {p: features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=p, freq=freq) for p in CV_PANELS_INT}
+        test_dataset = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=TEST_PANEL_INT, freq=freq)
     else:
-        datasets = {p: Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=p, freq=freq, big_latent=True, type=type) for p in CV_PANELS}
-        test_dataset = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=TEST_PANEL, freq=freq, big_latent=True, type=type)
+        datasets = {p: Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=p, freq=freq, big_latent=True, type=type,beta_constant=beta) for p in CV_PANELS_INT}
+        test_dataset = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=TEST_PANEL_INT, freq=freq, big_latent=True, type=type,beta_constant=beta)
     
-    train_panels = [p for p in CV_PANELS if p != val_panel]
+    train_panels = [p for p in CV_PANELS_INT if p != val_panel]
 
     # normalization stats from training panels only (mirrors GCN_train.train_with_features)
     all_train_datasets = [datasets[p] for p in train_panels]
@@ -367,8 +348,12 @@ def _retrain_fold(best_params, val_panel, freq, out_dir, epochs, seed=42, type=T
             out, HI = model(data.x, data.edge_index, data.batch, data.edge_weight)
             global_loss = monotonicity_loss(HI, data.y, data.panel)
             path_loss = combined_path_loss(HI, out, data.y, data.panel)
-            damage_loss = damage_map_loss(out, data.y, data.panel)
-            loss = global_loss + path_loss + damage_loss 
+            damage_loss = damage_map_loss(out, data.panel, beta=beta)
+            if add_damage_loss:
+                loss = global_loss + path_loss + damage_loss
+            else:
+                loss = global_loss + path_loss
+            
             loss.backward()
             optimizer.step()
             total_loss += loss.item(); total_global += global_loss.item()
@@ -384,8 +369,14 @@ def _retrain_fold(best_params, val_panel, freq, out_dir, epochs, seed=42, type=T
                 out, HI = model(data.x, data.edge_index, data.batch, data.edge_weight)
                 global_loss = monotonicity_loss(HI, data.y, data.panel)
                 path_loss = combined_path_loss(HI, out, data.y, data.panel)
-                damage_loss = damage_map_loss(out, data.y, data.panel)
-                total_vloss += (global_loss + path_loss + damage_loss).item()
+                damage_loss = damage_map_loss(out, data.panel, beta=beta)
+
+                if add_damage_loss:
+                    loss = global_loss + path_loss + damage_loss
+                else:
+                    loss = global_loss + path_loss
+
+                total_vloss += loss.item()
                 total_vglobal += global_loss.item(); total_vpath += path_loss.item()
                 total_vdamage += damage_loss.item()
         nv = len(val_loader)
@@ -475,7 +466,7 @@ def _build_trials_dataframe(tuner):
     return pd.DataFrame(records).sort_values("objective", ascending=False)
 
 
-# ─── Plotting (same style/layout as BO_features.py) ────────────────────────────
+# ─── Plotting ────────────────────────────
 def _min_max_normalize(values):
     x = np.asarray(values, dtype=float)
     lo, hi = x.min(), x.max()
@@ -555,20 +546,26 @@ def plot_hp_coverage(df, save_path):
 
 
 # ─── Main optimization routine ────────────────────────────────────────────────
-def run_bayesian_optimization(freq=DEFAULT_FREQ_INDEX, max_trials=30, out_dir=None,
-                               epochs_per_fold=EPOCHS_PER_FOLD, retrain_epochs=None, type=TYPE, raw_features=RAW_FEATURES):
+def run_bayesian_optimization(freq=DEFAULT_FREQ_INDEX, max_trials=MAX_TRIALS_GCN, out_dir=None,
+                               epochs_per_fold=EPOCHS_PER_FOLD_GCN, retrain_epochs=None, type=TYPE, raw_features=RAW_FEATURES, beta=BETA_CONSTANT):
     t_start = pd.Timestamp.now()
+    beta_suffix = f"_beta{beta}" if beta != BETA_CONSTANT else "" # for sensitivity sweeps on beta
+    project_name = f"gcn_{type}{'_raw' if raw_features else ''}{beta_suffix}"
+    damage_loss = True if type != "without_map_loss" else False
+
     tuner = MyGCNTuner(
         partial(build_model, raw_features=raw_features),
         objective=kt.Objective("Objective", direction="max"),
         max_trials=max_trials,
         directory=str(BO_TUNER_DIR),
-        project_name="gcn",
+        project_name=project_name,
         overwrite=True,
         freq=freq,
         epochs_per_fold=epochs_per_fold,
         type=type,
-        raw_features=raw_features
+        raw_features=raw_features,
+        beta=beta,
+        damage_loss=damage_loss
     )
     tuner.search()
     t_elapsed = pd.Timestamp.now() - t_start
@@ -577,12 +574,12 @@ def run_bayesian_optimization(freq=DEFAULT_FREQ_INDEX, max_trials=30, out_dir=No
     if type=="basic":
 
         if raw_features:
-            out_dir = str(BO_SEARCH_RESULTS_DIR / f"Bayesian_GCN_raw_freq{freq}") if out_dir is None else out_dir
+            out_dir = str(BO_SEARCH_RESULTS_DIR / f"Bayesian_GCN_raw_freq{freq}{beta_suffix}") if out_dir is None else out_dir
         else:
-            out_dir = str(BO_SEARCH_RESULTS_DIR / f"Bayesian_GCN_freq{freq}") if out_dir is None else out_dir
+            out_dir = str(BO_SEARCH_RESULTS_DIR / f"Bayesian_GCN_freq{freq}{beta_suffix}") if out_dir is None else out_dir
 
     else:
-        out_dir = str(BO_SEARCH_RESULTS_DIR / f"Bayesian_GCN_{type}_freq{freq}") if out_dir is None else out_dir
+        out_dir = str(BO_SEARCH_RESULTS_DIR / f"Bayesian_GCN_{type}_freq{freq}{beta_suffix}") if out_dir is None else out_dir
     os.makedirs(out_dir, exist_ok=True)
 
     best = tuner.oracle.get_best_trials(1)[0]
@@ -605,23 +602,19 @@ def run_bayesian_optimization(freq=DEFAULT_FREQ_INDEX, max_trials=30, out_dir=No
     # ── Retrain: one model per CV fold with the best hyperparameters ──────────
     best_params = best.hyperparameters.values
     fold_net_names = []
-    for val_panel in CV_PANELS:
+    for val_panel in CV_PANELS_INT:
         net_name = _retrain_fold(best_params, val_panel, freq, out_dir,
                                   epochs=retrain_epochs or epochs_per_fold,
-                                  type=type, raw_features=raw_features)
+                                  type=type, raw_features=raw_features, beta=beta, add_damage_loss=damage_loss)
         fold_net_names.append(net_name)
 
-    # ── Ensemble: must run BEFORE build_and_save_ensemble writes ensemble_model.pt
-    # into out_dir, since ensemble_predict scans every .pt file in model_path and
-    # expects each to be a {'model','feature_mean','feature_std'} checkpoint dict --
-    # the ensemble file itself is a raw EnsembleGCN module, not that dict shape.
 
     if raw_features:
-        cv_datasets = [features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=p, freq=freq) for p in CV_PANELS]
-        test_dataset = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=TEST_PANEL, freq=freq)
+        cv_datasets = [features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=p, freq=freq) for p in CV_PANELS_INT]
+        test_dataset = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=TEST_PANEL_INT, freq=freq)
     else:
-        cv_datasets = [Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=p, freq=freq, big_latent=True, type=type) for p in CV_PANELS]
-        test_dataset = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=TEST_PANEL, freq=freq, big_latent=True, type=type)
+        cv_datasets = [Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=p, freq=freq, big_latent=True, type=type, beta_constant=beta) for p in CV_PANELS_INT]
+        test_dataset = Panel_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=TEST_PANEL_INT, freq=freq, big_latent=True, type=type, beta_constant=beta)
     
     ensemble_predict(cv_datasets, test_dataset, model_path=out_dir,
                       save_dir=os.path.join(out_dir, "ensemble_HI_plot.svg"))
@@ -629,7 +622,7 @@ def run_bayesian_optimization(freq=DEFAULT_FREQ_INDEX, max_trials=30, out_dir=No
     ensemble_path = os.path.join(out_dir, "ensemble_model.pt")
     build_and_save_ensemble(out_dir, ensemble_path)
 
-    # ── BO diagnostic plots (same style as BO_features.py) ─────────────────────
+    # ── BO diagnostic plots ─────────────────────
     fitness_h, damage_h, train_h, val_h = _collect_metric_histories(tuner)
     objective_h = [t.score for t in tuner.oracle.trials.values() if t.score is not None]
     df = _build_trials_dataframe(tuner)
@@ -658,4 +651,4 @@ def run_bayesian_optimization(freq=DEFAULT_FREQ_INDEX, max_trials=30, out_dir=No
 
 
 if __name__ == "__main__":
-    run_bayesian_optimization(max_trials=30)
+    run_bayesian_optimization()

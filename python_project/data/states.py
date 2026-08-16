@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
-for _sub in ("data", "models", "algorithms", "training", "viz", "scripts"):
+for _sub in ("data", "models", "tools", "training", "intermediate_results_check", "results_analysis"):
     _p = str(_PROJECT_ROOT / _sub)
     if _p not in sys.path:
         sys.path.insert(0, _p)
@@ -129,18 +129,11 @@ class states:
         return tf.reduce_sum(tf.square(amp), axis=dim)
 
     def signal_envelope_peak(self, s_idx, freq, p_idx):
-        # tf.signal.hilbert doesn't exist in this TF version -- scipy.signal.hilbert
-        # is the real analytic-signal transform. amplitude() returns shape (4000, 1)
-        # for a scalar s_idx (not squeezed like the multi-state branch), so flatten
-        # first or hilbert would transform along the wrong (length-1) axis.
         amp = np.asarray(self.amplitude(s_idx, freq, p_idx)).reshape(-1)
         envelope = np.abs(hilbert(amp))
         return tf.reduce_max(envelope)
 
     def signal_envelope_peak_area(self, s_idx, freq, p_idx):
-        # Trapezoidal area under the envelope's main lobe: walk outward from the
-        # global peak in both directions while the envelope is still descending,
-        # stopping at the nearest local minimum (or the signal boundary) on each side.
         amp = np.asarray(self.amplitude(s_idx, freq, p_idx)).reshape(-1)
         envelope = np.abs(hilbert(amp))
         peak_idx = int(np.argmax(envelope))
@@ -228,12 +221,3 @@ class states:
             plt.savefig(save_path, format='svg', bbox_inches='tight')
        
 
-if __name__ == "__main__":
-    # Example usage
-    mat_file = mat_file_path("103")
-    panel_states = states(mat_file)
-    dt = panel_states.dt()
-    print(f"Time step (dt): {dt}")
-    print(f"Total time of the signal: {dt * 2000}")  # Assuming 2000 samples as per the original code
-    panel_states.size_summary()
-    panel_states.plot(s_idx=27, freq=3, p_idx=15)

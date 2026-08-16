@@ -1,16 +1,17 @@
 '''
-Plotting and ensembling helpers for the autoencoder cross-validation loop in big_train.py.
+Plotting and ensembling helpers for the autoencoder cross-validation loop in BO_AE and AE_train.py.
 
-Each cross-validation fold holds one of the 4 base panels out of training and produces its
-own Keras model (outputs named 'sHI' and 'reconstruction', see fc_AE.build_fc_AE_features /
-build_CNN_AE_features) plus its own feature normalization stats (fit only on that fold's 3
-training panels, see states_check.prepare_datastores).
+Includes:
+- ClipLayer: a proper Layer wrapper for tf.clip_by_value, so the ensemble model saves and reloads without Keras's Lambda-deserialization restrictions.
+- _drop_kwargs: monkey-patches Keras classes to drop unsupported kwargs (e.g. renorm, input_axes) that are present in the original code but not supported in the current Keras version.
+- _predict_dataset: runs model.predict over every batch of a datastore, returns concatenated (sHI, reconstruction) arrays.
+
 '''
 import sys
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
-for _sub in ("data", "models", "algorithms", "training", "viz", "scripts"):
+for _sub in ("data", "models", "tools", "training", "intermediate_results_check", "results_analysis"):
     _p = str(_PROJECT_ROOT / _sub)
     if _p not in sys.path:
         sys.path.insert(0, _p)
@@ -40,18 +41,6 @@ class ClipLayer(tf.keras.layers.Layer):
         return config
 
 
-'''Some fold models were saved by an older Keras version whose layer configs include
-fields the currently installed Keras's __init__ signatures no longer accept (e.g.
-HeNormal's input_axes/output_axes, BatchNormalization's
-renorm/renorm_clipping/renorm_momentum). A custom_objects={"HeNormal": ...}
-substitution can't fix this: Keras 3's custom_objects lookup keys strictly on the saved
-`registered_name` field, and these older files predate
-@register_keras_serializable() entirely, so registered_name is None -- Keras never even
-checks custom_objects, it resolves the class straight from the real keras module. The
-only place that can actually intercept this is the real class itself, so patch it in
-place and drop the specific kwargs its __init__ no longer recognizes.'''
-
-
 def _drop_kwargs(cls, *bad_keys):
     real_init = cls.__init__
 
@@ -62,11 +51,10 @@ def _drop_kwargs(cls, *bad_keys):
 
     cls.__init__ = patched_init
 
-
+# This is in case some models were built with older Keras versions
 _drop_kwargs(tf.keras.initializers.HeNormal, "input_axes", "output_axes")
 _drop_kwargs(tf.keras.layers.BatchNormalization, "renorm", "renorm_clipping", "renorm_momentum")
-_CompatHeNormal = tf.keras.initializers.HeNormal  # kept importable for existing CUSTOM_OBJECTS dicts
-
+_CompatHeNormal = tf.keras.initializers.HeNormal  
 
 def _predict_dataset(model, ds):
     '''Runs model.predict over every batch of a datastore, returns concatenated (sHI, reconstruction) arrays.'''
@@ -132,32 +120,15 @@ def plot_reconstruction_cv_fold(fold_model, ds_dict, States_dict, panels, held_o
 
 
 def _normalization_mean_variance_axis(norm_stats, input_shape):
-    '''Shapes a fold's feature_means/feature_stds for tf.keras.layers.Normalization
-    against a model's (batch-excluded) input_shape.
-
-    Two cases, depending on how many channels the raw feature array had when the stats
-    were fit (see states_check.prepare_datastores):
-    - mean/std already match input_shape exactly (e.g. (33, 2) for CNN_AE_features with
-      include_benchmark=True and no differencing) -- every (feature, channel) pair got its
-      own independently-fit stat, so every non-batch axis is a Normalization axis and the
-      arrays are used as-is.
-    - mean/std are a flat (n_feat,) array (fc_AE, or CNN_AE without benchmark / with
-      diff_bench) -- a single per-feature stat that must broadcast across any extra
-      channel axis, so it's reshaped onto just the feature axis.
-    '''
     mean = norm_stats["feature_means"].astype(np.float32)
     variance = norm_stats["feature_stds"].astype(np.float32) ** 2
 
     if mean.shape == input_shape:
-        axis = tuple(range(1, len(input_shape) + 1))
+        axis = tuple(range(1, len(input_shape) + 1)) # all non-batch axes are Normalization axes (so every feature and channel pair gets its own stat)
         return mean, variance, axis
 
-    # Flat per-feature stat: broadcast onto the first non-batch axis (-1 for the flat
-    # fc_AE shape (n_feat,), 1 for the CNN_AE shape (n_feat, n_channels)).
-    axis = 1 if len(input_shape) > 1 else -1
-    bshape = [1] * len(input_shape)
-    target_idx = axis - 1 if axis > 0 else axis
-    bshape[target_idx] = mean.shape[0]
+    # For cases where input is (n_feat,1) and mean is (n_feat,) -- reshape to (n_feat,1) so it broadcasts correctly across the channel axis.
+    bshape = [mean.shape[0], 1]
     return mean.reshape(bshape), variance.reshape(bshape), axis
 
 
@@ -167,8 +138,7 @@ def build_ensemble_ae(fold_entries):
     Each fold's model was trained on features normalized with that fold's own mean/std
     (fit only on that fold's 3 training panels), so the ensemble can't just average raw
     model outputs -- it re-normalizes the shared raw input separately per branch, and
-    de-normalizes each branch's reconstruction back to raw units (the reconstruction
-    target is the normalized input itself, see states_check.normalize) before averaging.
+    de-normalizes each branch's reconstruction back to raw units before averaging.
 
     fold_entries: list of (panel_held_out, keras_model, norm_stats) tuples.
     '''
@@ -177,34 +147,24 @@ def build_ensemble_ae(fold_entries):
 
     shi_branches, rec_branches, latent_branches = [], [], []
     for panel, model, norm_stats in fold_entries:
-        # "latent_space" is an internal KSparse layer, not one of model's declared
-        # outputs (only sHI/reconstruction are). Fold it into a single 3-output model
-        # up front, rather than calling `model` plus a second sub-model tapping the same
-        # encoder layers -- two separate Model containers both tracking the same shared
-        # layers breaks Keras's .keras save/reload (the shared layers' weights silently
-        # drop on reload, since they end up double-tracked in the object graph).
+        
         shi_idx = model.output_names.index("sHI")
         rec_idx = model.output_names.index("reconstruction")
         latent_output = model.get_layer("latent_space").output
         model = tf.keras.Model(inputs=model.input, outputs=[model.output[shi_idx], model.output[rec_idx], latent_output], name=model.name)
         shi_idx, rec_idx, latent_idx = 0, 1, 2
 
-        # Every fold's model was built by the same factory function (build_CNN_AE_features
-        # / build_fc_AE_features), so their internal layers (bench_comp, enc_dense,
-        # latent_space, sHI, ...) all share identical names across folds. Keras's .keras
-        # save format indexes weights by layer name across the *whole* nested tree, so
-        # without uniquifying them here, sibling folds' same-named layers collide on
-        # save and silently drop weights on reload. Renaming model.name alone (as
-        # before) isn't enough -- every layer inside it needs a unique name too.
+        """
+        Every fold's model was built by the same factory function (build_CNN_AE_features/ build_fc_AE_features), so their internal layers have the same names. 
+        This causes errors when building ensemble model, so the layer names must be prefixed with the fold's held-out panel name (to keep them unique)
+        """
         prefix = f"fold_{panel}_"
         for layer in model.layers:
             layer.name = prefix + layer.name
         model.name = prefix + model.name
 
+        # Prepare normalization and de-normalization layers 
         mean, variance, norm_axis = _normalization_mean_variance_axis(norm_stats, input_shape)
-
-        # Normalization stores mean/variance as weights (unlike a Lambda closing over
-        # tf.constant, which Keras can't JSON-serialize), so the ensemble saves cleanly.
         norm_layer = tf.keras.layers.Normalization(axis=norm_axis, mean=mean, variance=variance, name=f"norm_{panel}")
         denorm_layer = tf.keras.layers.Normalization(axis=norm_axis, mean=mean, variance=variance, invert=True, name=f"denorm_{panel}")
 
@@ -225,12 +185,7 @@ def build_ensemble_ae(fold_entries):
 
 
 def plot_ensemble_sHI(ensemble_model, ref_ds_dict, ref_norm_stats, States_dict, panels, save_path):
-    '''sHI vs state predicted by the ensemble, one subplot per base panel.
-
-    ref_ds_dict/ref_norm_stats: any single fold's ds_dict plus the norm_stats that produced
-    it -- used only to recover each panel's raw (unnormalized) features, since the ensemble
-    re-normalizes per branch internally and expects raw input.
-    '''
+    '''sHI vs state predicted by the ensemble, one subplot per base panel.'''
     input_shape = ensemble_model.input_shape[1:]
     mean_b, variance_b, _ = _normalization_mean_variance_axis(ref_norm_stats, input_shape)
     std_b = np.sqrt(variance_b)
@@ -243,9 +198,6 @@ def plot_ensemble_sHI(ensemble_model, ref_ds_dict, ref_norm_stats, States_dict, 
         states = States_dict[panel]
         all_sHI = []
         for x_norm, _ in ref_ds_dict[panel]:
-            # The datastore yields features with shape (batch, n_feat) even for CNN_AE_features
-            # (whose Input is (n_feat, n_channels)) -- Keras' fit/predict silently tolerates that
-            # trailing-1-dim mismatch, but plain numpy broadcasting below does not.
             x_norm = np.asarray(x_norm).reshape((-1,) + input_shape)
             x_raw = x_norm * std_b + mean_b
             pred = ensemble_model.predict(x_raw, verbose=0)

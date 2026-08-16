@@ -2,51 +2,10 @@
 import torch
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv, global_mean_pool
-class GraphCNN(torch.nn.Module):
-    def __init__(self, num_node_features):
-        super(GraphCNN, self).__init__()
-        self.num_node_features = num_node_features
-        if num_node_features > 24:
-            self.lin = torch.nn.Linear(num_node_features, 24)
-            self.conv1 = GCNConv(24, 1)
-        else:
-            self.conv1 = GCNConv(num_node_features, 1)
-        
-
-    def forward(self, x, edge_index, batch, edge_weight=None):
-        if self.num_node_features > 24:
-            x = self.lin(x)
-            x = F.leaky_relu(x, negative_slope=0.1)
-        x = self.conv1(x, edge_index, edge_weight)
-        
-
-
-        
-        HI = global_mean_pool(x, batch)  # Pooling to get graph-level representation
-        #HI = self.lin(HI)  # Final output
-        return x, HI
 
 
 class DeepGraphCNN(torch.nn.Module):
-    """Deeper variant of GraphCNN: N stacked GCNConv layers (depth/width set by
-    hidden_channels) instead of a single conv straight to the scalar output, with
-    optional residual connections to counter over-smoothing -- a real risk here since
-    the graph is small and densely connected (28 nodes, crossing-based edges), so a
-    few hops can already mix most of the graph together. Kept separate from GraphCNN
-    so existing GCN_train.py callers (train / train_with_features) are unaffected.
-
-    Same forward interface as GraphCNN: returns (x, HI) where x is the per-node scalar
-    output (batch*num_paths, 1) and HI is its graph-level mean-pooled value -- both are
-    still required downstream (combined_path_loss, damage_map_loss expect exactly one
-    value per node).
-
-    input_compress_dim, if given, restores GraphCNN's own behavior: a plain (non-graph-
-    aware) Linear + LeakyReLU compresses raw node features to this width BEFORE any
-    GCNConv layer runs, so the GCNConv stack always sees a fixed-width input regardless
-    of num_node_features -- e.g. input_compress_dim=24 makes this a drop-in deeper
-    replacement for GraphCNN's own Linear(num_node_features, 24) step. None (default)
-    skips it and feeds num_node_features directly into the first GCNConv, as before.
-    """
+    
     def __init__(self, num_node_features, hidden_channels=(32, 16), dropout=0.0,
                  use_residual=True, input_compress_dim=None):
         super().__init__()

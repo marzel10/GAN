@@ -1,12 +1,14 @@
-# PZT SHM Pipeline
+# Multitask AE-GCN for HI extraction and damge detection 
 
-Structural health monitoring pipeline for PZT sensor panels: raw signal data is turned
+Structural health monitoring pipeline for deteecting damage and extracting HI for composite panels: raw GW signal data is turned
 into per-path health indices (sHI) via autoencoders and/or a graph convolutional
 network (GCN), combined into a WCPDI damage map on the panel, and scored with
 prognostic-criteria metrics (monotonicity, trendability, prognosability).
 
 `config.py` at the project root is the single source of truth for paths, panel/sensor
 constants, and shared plot styling — nearly every other file imports from it.
+
+`run_serial.py` contains complete project workflow to regenrate projects results 
 
 ## Source folders
 
@@ -17,7 +19,6 @@ metrics, and the shared panel-drawing primitive other plots build on.
 
 - `weight_matrix.py` — Builds path-to-path attention/adjacency matrices (by crossing angle, area overlap, or raw signal features) used as GCN graph edges, and detects failed sensors per panel state.
 - `imagining_alghoritm.py` — Implements the WCPDI probability-based damage-imaging algorithm (`P`, `U`, `WCPDI` functions) that turns per-path sHI values into a 2D damage probability map on the panel.
-- `extract_shi.py` — Extracts sHI (health-index) values and latent reconstructions from trained autoencoder models for a given panel/frequency and writes them out for use in the graph dataset.
 - `prognostic_criteria.py` — Defines the monotonicity, trendability, and prognosability criterion functions used to score health-index quality.
 - `plot_panel.py` — Defines `plot_panel_with_paths`/`_draw_static_panel` to draw the PZT panel with sensors, damage point, and optionally active sensor paths; the shared backdrop other plotting scripts draw on top of.
 
@@ -29,6 +30,7 @@ AE and GCN models.
 - `states.py` — Defines the `states` class that loads panel `.mat` files and exposes amplitude, benchmark amplitude, time, and energy accessors plus plotting/summary helpers.
 - `features_extractor.py` — Extracts 19 time-domain + 14 frequency-domain features per signal half (66 features/state) from panel states, as input for the feature-based autoencoder.
 - `create_datastores.py` — Builds TensorFlow train/val/test datasets  from the features data for autoencoder training.
+- `extract_shi.py` — Extracts sHI (health-index) values and latent reconstructions from trained autoencoder models for a given panel/frequency and writes them out for use in the graph dataset.
 - `graph_dataset.py` — Defines `Panel_GraphDataset`, a PyTorch-Geometric `InMemoryDataset` that turns per-path sHI/latent values and attention-based adjacency into per-state graphs for the GCN.
 
 ### `models/`

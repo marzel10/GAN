@@ -1,8 +1,0 @@
-Action points:
-1. Change monotonicity function to the one from the paper or increase 0.01 parameter 
-2. Go back to per path sHI prediction and then connect sHI by GAN
-3. Double check the attention matrix for the parallel not intersecting paths (shouldn't be connected)
-4. Increase the batch size
-5. Prepare some GAN theory presentation 
-6. Rather change time of flight than the velocity , maybe try to see at what time first non zero input arrive. Alternativly check for how long the non zero signal remained and use this 
-Two dimmensional kernel

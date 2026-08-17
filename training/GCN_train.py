@@ -30,7 +30,7 @@ from imagining_alghoritm import optimal_beta, MAX_DIST, U as _wcpdi_U
 from config import (
     BETA_CONSTANT, DEFAULT_BATCH_SIZE, EPOCHS_PER_FOLD_GCN, GCN_MODELS_DIR, GRAPH_DATA_DIR, CROSS_VALIDATION_RESULTS_DIR,
     DEFAULT_FREQ_INDEX,
-    DEFAULT_N_FEATURES, BASE_PANELS,
+    DEFAULT_N_FEATURES, BASE_PANELS, TEST_PANEL,
     SENSOR_POSITIONS, SENSOR_PAIRS, DAMAGE_POINTS, PANEL_W, PANEL_H, VAL_PANELS, LR
 )
 
@@ -537,21 +537,12 @@ if __name__ == "__main__":
 
   
     validation_panels = [int(p) for p in BASE_PANELS]
-
-   
-    dataset_103 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=103, freq=DEFAULT_FREQ_INDEX)
-    dataset_104 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=104, freq=DEFAULT_FREQ_INDEX)
-    dataset_105 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=105, freq=DEFAULT_FREQ_INDEX)
-    dataset_109 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=109, freq=DEFAULT_FREQ_INDEX)
-    dataset_123 = features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=123, freq=DEFAULT_FREQ_INDEX)
+    test_panel = int(TEST_PANEL[0])
 
     dataset_dict = {
-        103: dataset_103,
-        104: dataset_104,
-        105: dataset_105,
-        109: dataset_109,
-        123: dataset_123
-    }  
+        int(p): features_GraphDataset(root=str(GRAPH_DATA_DIR), panel_number=int(p), freq=DEFAULT_FREQ_INDEX)
+        for p in BASE_PANELS + TEST_PANEL
+    }
     current_date = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     output_dir = str(CROSS_VALIDATION_RESULTS_DIR / current_date)
 
@@ -577,19 +568,19 @@ if __name__ == "__main__":
         else:
             model = bundle
 
-        train_datasets = [dataset for key, dataset in dataset_dict.items() if key != val_panel and key != 123]
+        train_datasets = [dataset for key, dataset in dataset_dict.items() if key != val_panel and key != test_panel]
         validation_datasets = [dataset_dict[val_panel]]
-        test_datasets = [dataset_dict[123]]  # Assuming panel 123 is always the test panel
+        test_datasets = [dataset_dict[test_panel]]
         plot_HI(model, train_datasets, validation_datasets, test_datasets, save_dir=f"{output_dir}/HI_plot_val_{val_panel}.png")
-    
-    ensemble_predict([dataset_103, dataset_104, dataset_105, dataset_109], dataset_123, model_path=output_dir, save_dir=f"{output_dir}/ensemble_HI_plot.png")
-    
+
+    ensemble_predict([dataset_dict[p] for p in validation_panels], dataset_dict[test_panel], model_path=output_dir, save_dir=f"{output_dir}/ensemble_HI_plot.png")
+
     # Build and save ensemble model
     ensemble_model_path = os.path.join(output_dir, "ensemble_model.pt")
     build_and_save_ensemble(output_dir, ensemble_model_path)
 
-    # plot sHI for an example path 
+    # plot sHI for an example path
     example_path_idx = 0  # Change this index to plot sHI for a different path
-    plot_sHI(model, dataset_123, example_path_idx)
+    plot_sHI(model, dataset_dict[test_panel], example_path_idx)
 
     

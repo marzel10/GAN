@@ -41,18 +41,20 @@ def mat_file_path(panel_name: str) -> Path:
 # ===========================================================================
 # Panels
 # ===========================================================================
-BASE_PANELS = ["103", "104", "105", "109"]  # Previously redefined independently in: BO.py, big_train.py, GCN_train.py, extract_shi.py, states_check.py, states_plot.py
-PANEL_123_SUBPANELS = ["123_1", "123_2", "123_31", "123_32", "123_41", "123_42", "123_43", "123_44"]  # Previously redefined in: BO.py, big_train.py, results_viz.py, graph_dataset.py, features_extractor.py, states_check.py
-ALL_PANELS = BASE_PANELS + ["123"] + PANEL_123_SUBPANELS
+SINGLE_FILE_PANELS = ["103", "104", "105", "109"]  # panels with one whole-panel .mat file each -- "123" has no such file, only its 8 subpanel files (see PANEL_123_SUBPANELS), so this list never changes with TEST_PANEL
+ALL_BASE_PANELS = SINGLE_FILE_PANELS + ["123"]
+TEST_PANEL = ["123"]
+BASE_PANELS = [p for p in ALL_BASE_PANELS if p not in TEST_PANEL]
 
-TRAIN_PANELS = ["103", "104", "105"]                          # Used by: BO.py (TRAIN_DS_NAMES), big_train.py (train_ds_names default), results_viz.py (train_ds_names)
+PANEL_123_SUBPANELS = ["123_1", "123_2", "123_31", "123_32", "123_41", "123_42", "123_43", "123_44"]
+
+TRAIN_PANELS = ["103", "104", "105"]                          # used only as deafult train panels in AE_train, never in the actual workflow
 VAL_PANELS = ["109"]                                          # Used by: BO.py (VAL_DS_NAMES), big_train.py (val_ds_names default), results_viz.py (val_ds_names)
 TEST_PANELS = PANEL_123_SUBPANELS                             # Used by: BO.py (TEST_DS_NAMES), big_train.py (test_ds_names default), results_viz.py (test_ds_names) -- all 8 "123" subpanels held out as the test set
-TEST_PANEL = ["123"]                                      # Used by: BO.py (TEST_DS_NAMES), big_train.py (test_ds_names default), results_viz.py (test_ds_names) -- the pooled "123" panel held out as the test set
 VAL_123_SUBPANELS = ["123_1", "123_31", "123_41", "123_43"]   # states_check.py val split (finer split: half of the 123 subpanels)
 TEST_123_SUBPANELS = ["123_2", "123_32", "123_42", "123_44"]  # states_check.py test split (finer split: the other half of the 123 subpanels)
-CV_PANELS = ["103", "104", "109", "105"]
-FOLD_KEYS = BASE_PANELS + ["ensemble"]  
+CV_PANELS = BASE_PANELS
+FOLD_KEYS = BASE_PANELS + ["ensemble"]
 
 # Per-123-subpanel saved-state counts / global start offsets.
 # Previously byte-for-byte duplicated in weight_matrix.py and graph_dataset.py.
@@ -68,7 +70,7 @@ FAILURES_RECORD = {
     "105": [16, 8],
 }
 
-VALIDATION_PANEL_MAP = {"123": "109"}  # Owned by: extract_shi.py
+VALIDATION_PANEL_MAP = {TEST_PANEL[0]: "109"}  # Owned by: extract_shi.py
 
 # ===========================================================================
 # Frequency / sampling
@@ -92,7 +94,7 @@ LIFETIME_FRACTIONS = [1.0, 0.75, 0.5, 0.25, 0]  # Used by: Damage_metric_summary
 GCN_TYPES = ["basic", "by_area", "geometry", "peak", "wml"]
 MODEL_TYPES = GCN_TYPES + ["path", "raw"]
 TYPES_LABELS = {"basic": "A&C + energy", "by_area": "Area + energy", "geometry": "A&C", "peak": "A&C + peak", "wml": "A&C + energy w/o map loss", "path": "Path AE ensemble", "raw": "Raw features GCN"}
-PANELS = [int(p) for p in BASE_PANELS] + [123]
+PANELS = [int(p) for p in BASE_PANELS] + [int(TEST_PANEL[0])]
 
 DAMAGE_MAP_N_PIXELS = 40000
 

@@ -17,7 +17,7 @@ import tensorflow as tf
 from ae_cross_validation_helper import ClipLayer, plot_ensemble_sHI
 from CNN_AE import KSparse, ExpandLastDim, SqueezeLastDim
 from create_datastores import prepare_datastores
-from config import DEFAULT_FREQ_INDEX
+from config import DEFAULT_FREQ_INDEX, ALL_BASE_PANELS
 from AE_train import monotonicity_loss
 
 path_i = 0
@@ -36,8 +36,7 @@ custom_objects = {
 model = tf.keras.models.load_model(model_path, custom_objects=custom_objects, compile=False)
 
 
-cv_panels = ["103", "104", "105","123", "109"]
-train_ds_names = [p for p in cv_panels if p != panel_number]
+train_ds_names = [p for p in ALL_BASE_PANELS if p != panel_number]
 
 _, _, _, ds_dict, _, States_dict, norm_stats = prepare_datastores(
     path_i=path_i, freq_i=freq_i, base_batch_size=8, test_batch_size=1,

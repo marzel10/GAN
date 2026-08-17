@@ -45,11 +45,11 @@ from CNN_AE import KSparse, ExpandLastDim, SqueezeLastDim
 from AE_train import monotonicity_loss
 from create_datastores import prepare_datastores
 from prognostic_criteria import monotonicity_criterion, trendability_criterion, prognosability_criterion
-from config import BASE_PANELS, DEFAULT_N_PIXELS, FREQUENCY_MAPPING, LIFETIME_FRACTIONS, METRIC_NAMES, FOLD_KEYS, AE_RESULTS_DIR
+from config import BASE_PANELS, TEST_PANEL, DEFAULT_N_PIXELS, FREQUENCY_MAPPING, LIFETIME_FRACTIONS, METRIC_NAMES, FOLD_KEYS, AE_RESULTS_DIR
 
 
 BO_folders = [f"Multi_path_BO_fixed_freq{i}" for i in range(6)]
-PANELS = BASE_PANELS + ["123"]           # 103, 104, 105, 109, 123 -- panel axis (size 5)
+PANELS = BASE_PANELS + TEST_PANEL        # panel axis (size 5), test panel always last
 N_PATHS = 28
 OUT_DIR = AE_RESULTS_DIR
 
@@ -118,7 +118,7 @@ def compute_sHI_and_metrics():
                     train_ds_names = [p for p in BASE_PANELS if p != held_out]
                     _, _, _, ds_dict, *_rest = prepare_datastores(
                         path_i=path_i, freq_i=freq_i, base_batch_size=16, test_batch_size=1,
-                        train_ds_names=train_ds_names, val_ds_names=[held_out], test_ds_names=["123"],
+                        train_ds_names=train_ds_names, val_ds_names=[held_out], test_ds_names=TEST_PANEL,
                         include_benchmark=True, 
                     )
                     norm_stats = _rest[-1]
@@ -370,7 +370,7 @@ def main(recompute=True):
     WAE_weights = fitness[:, :-1] / np.nansum(fitness, axis=1, keepdims=True)
     plot_metrics(metrics)
     plot_sHI_grid(sHI, weights=WAE_weights)
-    plot_damage_map_grid(panel_numbers=[103, 104, 105, 109, 123], fractions=LIFETIME_FRACTIONS,  n_pixels=DEFAULT_N_PIXELS, sHI=sHI, save_path=str(OUT_DIR / "WCPDI_AE_damage_maps_grid.svg"))
+    plot_damage_map_grid(panel_numbers=[int(p) for p in PANELS], fractions=LIFETIME_FRACTIONS,  n_pixels=DEFAULT_N_PIXELS, sHI=sHI, save_path=str(OUT_DIR / "WCPDI_AE_damage_maps_grid.svg"))
 
 
 if __name__ == "__main__":

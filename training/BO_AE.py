@@ -17,13 +17,12 @@ Hardcoded constants:
     - K_SPARSE_PENALTY_WEIGHT: weight for the k-sparse penalty subtracted from the search
       objective (see below) -- larger k_sparse is penalized so the search doesn't just
       chase whatever k_sparse happens to maximize raw fitness.
-    - TEST_PANELS_123 used for the test 
     - CV_PANELS: panels used for cross-validation (leave-one-out)
     - EPOCHS_PER_FOLD: number of epochs to train in each fold of cross-validation
     - MODEL_DB_DIR: directory to save the model database Excel file
     - learning_rate: learning rate for training the models (currently fixed at 0.001)
     - loss_weights: weights for the reconstruction loss and latent loss (currently fixed at 1.0 and 2.0)
-    - Test set is always 123
+    - Test set is config.TEST_PANEL
 
 Search objective: "Objective" (direction="max") = mean_fitness - k_sparse_penalty(k_sparse),
 where mean_fitness is computed per CV fold as a*monotonicity + b*trendability +

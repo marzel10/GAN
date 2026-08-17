@@ -34,7 +34,7 @@ from config import (
 )
 
 GCN_FREQ_FOLDERS = [f"Bayesian_GCN_freq{i}" for i in range(6)]
-PANELS = [int(p) for p in BASE_PANELS] + [TEST_PANEL]   # panel axis (size 5)
+PANELS = [int(p) for p in BASE_PANELS] + [int(TEST_PANEL[0])]   # panel axis (size 5)
 N_PATHS = 28
 
 OUT_DIR = GCN_RESULTS_DIR

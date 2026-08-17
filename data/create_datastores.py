@@ -25,7 +25,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from config import (
-    BASE_PANELS, PANEL_123_SUBPANELS, VAL_123_SUBPANELS, TEST_123_SUBPANELS,
+    BASE_PANELS, SINGLE_FILE_PANELS, PANEL_123_SUBPANELS, VAL_123_SUBPANELS, TEST_123_SUBPANELS,
     mat_file_path, DEFAULT_FREQ_INDEX, FEATURES_CACHE_DIR,
 )
 
@@ -47,7 +47,7 @@ def make_ds_features(arr, N, batch_size, state_idx=None):
     return ds.map(_pack).batch(batch_size, drop_remainder=False)
 
 
-ds_names = BASE_PANELS + PANEL_123_SUBPANELS
+ds_names = SINGLE_FILE_PANELS + PANEL_123_SUBPANELS
 
 states_list = [states(str(mat_file_path(name))) for name in ds_names]
 features_list = [FeaturesExtractor(str(mat_file_path(name))) for name in ds_names]

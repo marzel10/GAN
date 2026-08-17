@@ -43,7 +43,7 @@ def _beta_from_folder(folder_name):
 
 
 GCN_BETA_FOLDERS = [f"Bayesian_GCN_{GCN_TYPE}_freq{FREQ_FOR_BETA_SWEEP}{_beta_suffix(b)}" for b in BETAS]
-PANELS = [int(p) for p in BASE_PANELS] + [TEST_PANEL]   # panel axis (size 5)
+PANELS = [int(p) for p in BASE_PANELS] + [int(TEST_PANEL[0])]   # panel axis (size 5)
 
 OUT_DIR = BETA_SWEEP_RESULTS_DIR
 

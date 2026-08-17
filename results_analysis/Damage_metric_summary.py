@@ -52,10 +52,12 @@ import torch_geometric
 from graph_dataset import Panel_GraphDataset, features_GraphDataset
 from imagining_alghoritm import P_AE, U, WCPDI
 from config import (
-    BASE_PANELS, BETA_CONSTANT, BETAS, BO_SEARCH_RESULTS_DIR, DAMAGE_POINTS, FREQ_FOR_BETA_SWEEP,
+    BASE_PANELS, TEST_PANEL, BETA_CONSTANT, BETAS, BO_SEARCH_RESULTS_DIR, DAMAGE_POINTS, FREQ_FOR_BETA_SWEEP,
     FREQUENCY_MAPPING, GRAPH_DATA_DIR, PANEL_W, PANEL_H, PROJECT_ROOT, GCN_TYPES, MODEL_TYPES, TYPES_LABELS, PANELS, DAMAGE_MAP_N_PIXELS, COMPARE_OUT_DIR,
     _LINESTYLES, CUSTOM_PALETTE as PALETTE, COMPARE_OUT_DIR, LIFETIME_FRACTIONS
 )
+
+TEST_PANEL_INT = int(TEST_PANEL[0])
 
 
 def _beta_suffix(beta):
@@ -147,7 +149,7 @@ def _load_path_ae_out(panel_number, freq):
         sHI = pickle.load(f)
 
     fold_keys = BASE_PANELS + ["ensemble"]
-    panels = BASE_PANELS + ["123"]
+    panels = BASE_PANELS + TEST_PANEL
     fold_idx = fold_keys.index("ensemble")
     panel_idx = panels.index(str(panel_number))
 
@@ -239,7 +241,8 @@ def evaluate_damage_loss(model_type, panel_number, freq, beta=BETA_CONSTANT, lif
     }
 
 FREQ_LABELS = [f"{f} kHz" for f in FREQUENCY_MAPPING] + ["average"]
-PANEL_LABELS = {103: "L1-03", 104: "L1-04", 105: "L1-05", 109: "L1-09", 123: "L1-23 (test)", "average": "Val. Avg."}
+PANEL_LABELS = {103: "L1-03", 104: "L1-04", 105: "L1-05", 109: "L1-09", 123: "L1-23", "average": "Val. Avg."}
+PANEL_LABELS[TEST_PANEL_INT] += " (test)"
 
 def _palette_color(i):
     return PALETTE[i % len(PALETTE)]
@@ -257,7 +260,7 @@ def _plot_damage_loss_vs_freq(data, panel_cols, title, file_name, out_dir=COMPAR
     fig, ax = plt.subplots(figsize=(9, 5))
     for i, col in enumerate(panel_cols):
         is_avg = col == "average"
-        marker_sign = "o"if col != 123 else "s"
+        marker_sign = "o"if col != TEST_PANEL_INT else "s"
         color, linestyle = _palette_style(i)
         ax.plot(x, data[:, i], linestyle="--" if is_avg else linestyle, marker=marker_sign, markersize=4,
                 color="k" if is_avg else color, label=PANEL_LABELS.get(col, str(col)))
@@ -284,7 +287,7 @@ def compare_GCN_and_AE(out_dir=COMPARE_OUT_DIR):
     damage_loss_GCN = np.empty((n_freq, n_panels))
     damage_loss_AE = np.empty((n_freq, n_panels))
     for freq in range(len(FREQUENCY_MAPPING)):
-        for i, panel in enumerate(PANELS + [123]):  # last column recomputed as the average below
+        for i, panel in enumerate(PANELS + [TEST_PANEL_INT]):  # last column recomputed as the average below
             result_GCN = evaluate_damage_loss("basic", panel, freq)
             damage_loss_GCN[freq, i] = result_GCN["mean_diff"]
 
@@ -298,7 +301,7 @@ def compare_GCN_and_AE(out_dir=COMPARE_OUT_DIR):
     damage_loss_AE[-1, :] = mean_freq_AE
 
     # mean over valition coupons for every frequency 
-    mean_val_GCN = np.nanmean(damage_loss_GCN[:, :-2], axis=1)  # 123 is the test panel so it is excluded
+    mean_val_GCN = np.nanmean(damage_loss_GCN[:, :-2], axis=1)  # the test panel is excluded
     mean_val_AE = np.nanmean(damage_loss_AE[:, :-2], axis=1)
     damage_loss_GCN[:, -1] = mean_val_GCN
     damage_loss_AE[:, -1] = mean_val_AE
@@ -316,9 +319,9 @@ def _plot_damage_loss_vs_type(data_by_type, title, file_name, out_dir=COMPARE_OU
     x = np.arange(len(GCN_TYPES))
 
     val_avg = np.array([data_by_type[t][-1, -1] for t in GCN_TYPES])
-    test_panel = np.array([data_by_type[t][-1, PANELS.index(123)] for t in GCN_TYPES])
+    test_panel = np.array([data_by_type[t][-1, PANELS.index(TEST_PANEL_INT)] for t in GCN_TYPES])
     val_avg_std = np.array([std_by_type[t][-1] for t in GCN_TYPES]) if std_by_type else None
-    test_panel_std = np.array([std_by_type[t][PANELS.index(123)] for t in GCN_TYPES]) if std_by_type else None
+    test_panel_std = np.array([std_by_type[t][PANELS.index(TEST_PANEL_INT)] for t in GCN_TYPES]) if std_by_type else None
 
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.errorbar(x, val_avg, yerr=val_avg_std, fmt="o-", markersize = 5 ,capsize=3, color=_palette_color(0), label="Val. Avg.")
@@ -350,14 +353,14 @@ def compare_GCN_types(out_dir=COMPARE_OUT_DIR):
 
     damage_loss_GCN_types = {model_type: np.empty((n_freq, n_panels)) for model_type in GCN_TYPES}
     for freq in range(len(FREQUENCY_MAPPING)):
-        for i, panel in enumerate(PANELS + [123]):  # last column recomputed as the average below
+        for i, panel in enumerate(PANELS + [TEST_PANEL_INT]):  # last column recomputed as the average below
             for model_type in GCN_TYPES:
                 result_GCN = evaluate_damage_loss(model_type, panel, freq)
                 damage_loss_GCN_types[model_type][freq, i] = result_GCN["mean_diff"]
 
     damage_loss_GCN_types_std_freq = {}
     for model_type in GCN_TYPES:
-        mean_val = np.nanmean(damage_loss_GCN_types[model_type][:-1, :-2], axis=1)  # 123 is the test panel so it is excluded
+        mean_val = np.nanmean(damage_loss_GCN_types[model_type][:-1, :-2], axis=1)  # the test panel is excluded
         std_val = np.nanstd(damage_loss_GCN_types[model_type][:-1, :-2], axis=1)
         damage_loss_GCN_types[model_type][:-1, -1] = mean_val
 
@@ -381,7 +384,7 @@ def _plot_damage_loss_vs_beta(data_by_beta, title, file_name, out_dir=COMPARE_OU
     fig, ax = plt.subplots(figsize=(9, 5))
     for i, col in enumerate(PANELS + ["average"]):
         is_avg = col == "average"
-        marker_sign = "o"if col != 123 else "s"
+        marker_sign = "o"if col != TEST_PANEL_INT else "s"
         color, linestyle = _palette_style(i)
         ax.plot(x, [data_by_beta[beta][i] for beta in betas], linestyle="--" if is_avg else linestyle, marker=marker_sign, markersize=4,
                 color="k" if is_avg else color, label=PANEL_LABELS.get(col, str(col)))
@@ -404,13 +407,13 @@ def compare_betas(freq,out_dir=COMPARE_OUT_DIR):
     betas = BETAS 
 
     damage_loss_betas = {beta: np.empty((n_panels,)) for beta in betas}
-    for i, panel in enumerate(PANELS + [123]):  # last column recomputed as the average below
+    for i, panel in enumerate(PANELS + [TEST_PANEL_INT]):  # last column recomputed as the average below
         for beta in betas:
             result_GCN = evaluate_damage_loss("by_area", panel, freq, beta=beta)
             damage_loss_betas[beta][i] = result_GCN["mean_diff"]
 
     for beta in betas:
-        # 123 is the test panel so it is excluded from the validation-panel average.
+        # the test panel is excluded from the validation-panel average.
         damage_loss_betas[beta][-1] = np.nanmean(damage_loss_betas[beta][:-2])
 
     _plot_damage_loss_vs_beta(damage_loss_betas, "Damage loss vs Beta", "damage_loss_betas_wo5000.svg", out_dir=out_dir)
@@ -454,7 +457,7 @@ def compare_raw(out_dir=COMPARE_OUT_DIR):
     '''Compute damage metric averaged over validation panels for the "raw" GCN type, vs frequency, and compare to the "basic" GCN type.'''
     n_freq = len(FREQUENCY_MAPPING) + 1  # +1 for the average-over-frequencies row
     types_to_show = ["basic",  "raw"]
-    base_panels = PANELS[:-1]  # BASE_PANELS as ints -- PANELS' last entry (123) is the test panel
+    base_panels = PANELS[:-1]  # BASE_PANELS as ints -- PANELS' last entry is the test panel
 
     val_avg = {t: np.empty(n_freq) for t in types_to_show}
     val_std = {t: np.empty(n_freq) for t in types_to_show}
@@ -465,7 +468,7 @@ def compare_raw(out_dir=COMPARE_OUT_DIR):
             base_vals = np.array([evaluate_damage_loss(type_, p, freq)["mean_diff"] for p in base_panels])
             val_avg[type_][freq] = np.nanmean(base_vals)
             val_std[type_][freq] = np.nanstd(base_vals)
-            test_panel[type_][freq] = evaluate_damage_loss(type_, 123, freq)["mean_diff"]
+            test_panel[type_][freq] = evaluate_damage_loss(type_, TEST_PANEL_INT, freq)["mean_diff"]
 
     for type_ in types_to_show:
         val_avg[type_][-1] = np.nanmean(val_avg[type_][:-1])
@@ -486,7 +489,7 @@ def _plot_damage_loss_vs_life_fraction(mean_by_lf, std_by_lf, life_fractions, ti
         means = [mean_by_lf[lf][i] for lf in life_fractions]
         stds = [std_by_lf[lf][i] for lf in life_fractions]
         color, linestyle = _palette_style(i)
-        marker_sign = "o" if panel != 123 else "s"
+        marker_sign = "o" if panel != TEST_PANEL_INT else "s"
         ax.errorbar(life_fractions, means, yerr=stds, fmt=f"{marker_sign}{linestyle}", capsize=3,
                     color=color, label=PANEL_LABELS.get(panel, str(panel)))
 
@@ -535,7 +538,7 @@ def compare_peak(out_dir=COMPARE_OUT_DIR):
 
     damage_loss_GCN = np.empty((n_freq, n_panels))
     for freq in range(len(FREQUENCY_MAPPING)):
-        for i, panel in enumerate(PANELS + [123]):  # last column recomputed as the average below
+        for i, panel in enumerate(PANELS + [TEST_PANEL_INT]):  # last column recomputed as the average below
             result_GCN = evaluate_damage_loss("peak", panel, freq)
             damage_loss_GCN[freq, i] = result_GCN["mean_diff"]
 
@@ -545,7 +548,7 @@ def compare_peak(out_dir=COMPARE_OUT_DIR):
     damage_loss_GCN[-1, :] = mean_freq_GCN
 
     # mean over valition coupons for every frequency 
-    mean_val_GCN = np.nanmean(damage_loss_GCN[:, :-2], axis=1)  # 123 is the test panel so it is exclude
+    mean_val_GCN = np.nanmean(damage_loss_GCN[:, :-2], axis=1)  # the test panel is excluded
     damage_loss_GCN[:, -1] = mean_val_GCN
     
 

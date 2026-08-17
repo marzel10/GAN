@@ -23,7 +23,7 @@ from CNN_AE import ExpandLastDim, KSparse, SqueezeLastDim
 from ae_cross_validation_helper import ClipLayer, _CompatHeNormal
 from AE_train import monotonicity_loss
 from create_datastores import prepare_simple_dataset
-from config import VALIDATION_PANEL_MAP, GRAPH_DATA_DIR, BASE_PANELS
+from config import VALIDATION_PANEL_MAP, GRAPH_DATA_DIR, ALL_BASE_PANELS
 
 def extract_shi(folders, freq, dataset, GAN_dir=str(_PROJECT_ROOT)):
     '''
@@ -88,7 +88,7 @@ def extract_shi(folders, freq, dataset, GAN_dir=str(_PROJECT_ROOT)):
 def pre_compute_AE_output():
     for freq in range(0,6):
         folders = [f"Multi_path_BO_fixed_freq{freq}\\Bayesian_CNN_AE_path{i}" for i in range(0, 28)]
-        datasets = BASE_PANELS + ["123"]
+        datasets = ALL_BASE_PANELS
     
         for dataset in datasets:
             latents_all, path_labels, big_latent_all = extract_shi(folders, freq, dataset)

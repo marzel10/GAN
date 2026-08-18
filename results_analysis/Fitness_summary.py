@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from config import PROJECT_ROOT, GRAPH_TYPES, GRAPH_LABELS, FREQ_LABELS, METRIC_COLUMNS, METRIC_NAMES, OUT_XLSX, OUT_DIR, CUSTOM_PALETTE as PALETTE, _LINESTYLES
+from config import TEST_RUN_DIR, GRAPH_TYPES, GRAPH_LABELS, FREQ_LABELS, METRIC_COLUMNS, METRIC_NAMES, OUT_XLSX, OUT_DIR, CUSTOM_PALETTE as PALETTE, _LINESTYLES
 
 
 def _palette_style(i):
@@ -38,8 +38,8 @@ def _palette_style(i):
 
 
 def _model_dirs():
-    dirs = {t: PROJECT_ROOT / f"graph_performance_results_{t}" for t in GRAPH_TYPES}
-    dirs["path"] = PROJECT_ROOT / "path_performance_results"
+    dirs = {t: TEST_RUN_DIR / f"graph_performance_results_{t}" for t in GRAPH_TYPES}
+    dirs["path"] = TEST_RUN_DIR / "path_performance_results"
     return dirs
 
 

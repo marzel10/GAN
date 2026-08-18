@@ -14,13 +14,13 @@ if str(_PROJECT_ROOT) not in sys.path:
 from graph_performance import PANELS, average_HI_over_frequency
 from Fitness_summary import METRIC_NAMES
 from prognostic_criteria import monotonicity_criterion, trendability_criterion, prognosability_criterion
-from config import BASE_PANELS, FREQUENCY_MAPPING, GRAPH_TYPES, TEST_PANEL, FOLD_KEYS
+from config import BASE_PANELS, FREQUENCY_MAPPING, GRAPH_TYPES, TEST_PANEL, TEST_RUN_DIR, FOLD_KEYS
 
 
 def main():
     types = GRAPH_TYPES
-    model_dirs = [_PROJECT_ROOT / f"graph_performance_results_{t}" for t in types]
-    model_dirs.append(_PROJECT_ROOT / "path_performance_results")
+    model_dirs = [TEST_RUN_DIR / f"graph_performance_results_{t}" for t in types]
+    model_dirs.append(TEST_RUN_DIR / "path_performance_results")
 
 
     for model_dir in model_dirs:

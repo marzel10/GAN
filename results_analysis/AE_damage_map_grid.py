@@ -99,7 +99,8 @@ def plot_damage_map_grid(panel_numbers=None, fractions=(0.0, 0.25, 0.5, 0.75, 1.
     fig.tight_layout()
     if save_path:
         fig.savefig(save_path, format='svg', bbox_inches='tight')
-    plt.show()
+    else:
+        plt.show()
     return fig
 
 

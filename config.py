@@ -12,27 +12,32 @@ import numpy as np
 # ===========================================================================
 PROJECT_ROOT = Path(__file__).resolve().parent  # .../GAN/
 
-# Data directories 
+TEST_PANEL = ["109"]  # <-- change this to make a different panel the held-out test panel
+TEST_RUN_DIR = PROJECT_ROOT / f"test_{TEST_PANEL[0]}"  # every result that depends on which panel is TEST_PANEL lives under here, so different TEST_PANEL runs never collide
+
+# Data directories -- shared/reusable across every TEST_PANEL run, not nested under TEST_RUN_DIR
 DATA_DIR = PROJECT_ROOT / "data"                                                # raw states directory used by mat_file_path()
-FEATURES_CACHE_DIR = PROJECT_ROOT / "features_cache"                            # create_datastores.py saves there pre computed features from raw states (AE input)
-GRAPH_DATA_DIR = PROJECT_ROOT / "graph_data"                                    # PyG dataset root (raw/ + processed/). It is therefore used by every program that uses GNN (GCN input)
-# GCN model directory
-BO_SEARCH_RESULTS_DIR = PROJECT_ROOT / "results"                                # Directory for the BO_GCN search results, folders with different types and frequencis are inside 
+FEATURES_CACHE_DIR = PROJECT_ROOT / "features_cache"                            # create_datastores.py saves there pre computed features from raw states (AE input) -- a function of panel/freq/path only, same regardless of TEST_PANEL
+
+# Everything below depends on TEST_PANEL (training uses BASE_PANELS, which
+# depends on it), so it's nested under TEST_RUN_DIR.
+GRAPH_DATA_DIR = TEST_RUN_DIR / "graph_data"                                    # PyG dataset root (raw/ + processed/). It is therefore used by every program that uses GNN (GCN input)
+BO_SEARCH_RESULTS_DIR = TEST_RUN_DIR / "results"                                # Directory for the BO_GCN search results, folders with different types and frequencis are inside
 # Analysis results directories
-AE_RESULTS_DIR = PROJECT_ROOT / "path_performance_results"                      # Written by: path_performance.py, summary plots and HI and metrics arrays are saved there.
-GCN_RESULTS_DIR = PROJECT_ROOT / "graph_performance_results_basic"              # Written by: graph_performance.py, summary plots and HI and metrics arrays are saved there.
-BETA_SWEEP_RESULTS_DIR = PROJECT_ROOT / "graph_performance_results_beta_sweep"  # Written by: graph_performance_beta_sweep.py, summary plots and HI and metrics arrays are saved there.
-COMPARE_OUT_DIR = PROJECT_ROOT / "damage_loss_evaluation_results"               # Written by: Damage_metric_summary.py, summary plots and metrics arrays are saved there.
+AE_RESULTS_DIR = TEST_RUN_DIR / "path_performance_results"                      # Written by: path_performance.py, summary plots and HI and metrics arrays are saved there.
+GCN_RESULTS_DIR = TEST_RUN_DIR / "graph_performance_results_basic"              # Written by: graph_performance.py, summary plots and HI and metrics arrays are saved there.
+BETA_SWEEP_RESULTS_DIR = TEST_RUN_DIR / "graph_performance_results_beta_sweep"  # Written by: graph_performance_beta_sweep.py, summary plots and HI and metrics arrays are saved there.
+COMPARE_OUT_DIR = TEST_RUN_DIR / "damage_loss_evaluation_results"               # Written by: Damage_metric_summary.py, summary plots and metrics arrays are saved there.
 # Other used in main workflow but  particularly relevant
-MODEL_DATABASE_XLSX_FEATURES = PROJECT_ROOT / "model_database_features.xlsx"    # Path to the AE model database 
-BO_TUNER_DIR = PROJECT_ROOT / "tuner_dir"                                       # keras-tuner scratch dir. 
-BO_RESULTS_DIR = PROJECT_ROOT / "BO_results"                                    # dafault directory to save the results of the BO_AE.py (not used)
+MODEL_DATABASE_XLSX_FEATURES = TEST_RUN_DIR / "model_database_features.xlsx"    # Path to the AE model database
+BO_TUNER_DIR = TEST_RUN_DIR / "tuner_dir"                                       # keras-tuner scratch dir.
+BO_RESULTS_DIR = TEST_RUN_DIR / "BO_results"                                    # dafault directory to save the results of the BO_AE.py (not used)
 # Only created when running AE_train.py main function:
-CROSS_VALIDATION_RESULTS_AE_DIR = PROJECT_ROOT / "Cross_Validation_Results_AE"  # Cross validation AE results are saved there, used only by AE_train.py
-MODEL_TRAIN_RESULTS_DIR = PROJECT_ROOT / "model_train_results"                  # AE_train.py saves there per fold results
+CROSS_VALIDATION_RESULTS_AE_DIR = TEST_RUN_DIR / "Cross_Validation_Results_AE"  # Cross validation AE results are saved there, used only by AE_train.py
+MODEL_TRAIN_RESULTS_DIR = TEST_RUN_DIR / "model_train_results"                  # AE_train.py saves there per fold results
 # Only created when running GCN_train.py main function:
-CROSS_VALIDATION_RESULTS_DIR = PROJECT_ROOT / "Cross_Validation_Results"        # Cross validation GCN results are saved there, used only by GCN_train.py
-GCN_MODELS_DIR = PROJECT_ROOT / "GCN_models"                                    # Singular GCN models will be saved there, used only by GCN_train.py 
+CROSS_VALIDATION_RESULTS_DIR = TEST_RUN_DIR / "Cross_Validation_Results"        # Cross validation GCN results are saved there, used only by GCN_train.py
+GCN_MODELS_DIR = TEST_RUN_DIR / "GCN_models"                                    # Singular GCN models will be saved there, used only by GCN_train.py
 
 def mat_file_path(panel_name: str) -> Path:
     return DATA_DIR / f"States_{panel_name}.mat"
@@ -43,8 +48,7 @@ def mat_file_path(panel_name: str) -> Path:
 # ===========================================================================
 SINGLE_FILE_PANELS = ["103", "104", "105", "109"]  # panels with one whole-panel .mat file each -- "123" has no such file, only its 8 subpanel files (see PANEL_123_SUBPANELS), so this list never changes with TEST_PANEL
 ALL_BASE_PANELS = SINGLE_FILE_PANELS + ["123"]
-TEST_PANEL = ["123"]
-BASE_PANELS = [p for p in ALL_BASE_PANELS if p not in TEST_PANEL]
+BASE_PANELS = [p for p in ALL_BASE_PANELS if p not in TEST_PANEL]  # TEST_PANEL is defined up in the Paths section, since TEST_RUN_DIR needs it first
 
 PANEL_123_SUBPANELS = ["123_1", "123_2", "123_31", "123_32", "123_41", "123_42", "123_43", "123_44"]
 
@@ -107,8 +111,8 @@ METRIC_COLUMNS = ["fitness", "monotonicity", "prognosability", "trendability"]
 FREQ_LABELS = [f"{f} kHz" for f in FREQUENCY_MAPPING] + ["average"]
 GRAPH_LABELS = {"basic": "A&C + energy", "by_area": "Area + energy", "geometry": "A&C", "peak": "A&C + peak", "wml": "A&C + energy w/o map loss", "raw": "Raw features"}
 
-OUT_XLSX = PROJECT_ROOT / "metrics_summary.xlsx"
-OUT_DIR = PROJECT_ROOT / "metrics_summary_results"
+OUT_XLSX = TEST_RUN_DIR / "metrics_summary.xlsx"
+OUT_DIR = TEST_RUN_DIR / "metrics_summary_results"
 
 
 

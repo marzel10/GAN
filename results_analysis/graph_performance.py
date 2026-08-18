@@ -346,11 +346,11 @@ def plot_HI_grid(HI, out_dir=OUT_DIR, folders=GCN_FREQ_FOLDERS, weights=None):
     for ax in axes[-1, :]:
         ax.set_xlabel("Life fraction")
     handles, labels = axes[0, -1].get_legend_handles_labels()
-    fig.legend(handles, labels, fontsize=7, loc="lower center",
-               bbox_to_anchor=(0.5, 0.0), ncol=len(PANELS))
+    fig.legend(handles, labels, fontsize=12, loc="lower center",
+               bbox_to_anchor=(0.5, 0.01), ncol=len(PANELS))
 
 
-    fig.tight_layout(rect=[0, 0.04, 1, 1])
+    fig.tight_layout(rect=[0, 0.025, 1, 1])
     save_path = out_dir / "HI_grid.svg"
     fig.savefig(save_path)
     plt.close(fig)

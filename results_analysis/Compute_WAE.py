@@ -15,12 +15,12 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from prognostic_criteria import monotonicity_criterion, trendability_criterion, prognosability_criterion
-from config import GRAPH_TYPES, FOLD_KEYS
+from config import GRAPH_TYPES, FOLD_KEYS, TEST_RUN_DIR
 
 def main():
     types = GRAPH_TYPES
-    model_dirs = [_PROJECT_ROOT / f"graph_performance_results_{t}" for t in types]
-    model_dirs.append(_PROJECT_ROOT / "path_performance_results")
+    model_dirs = [TEST_RUN_DIR / f"graph_performance_results_{t}" for t in types]
+    model_dirs.append(TEST_RUN_DIR / "path_performance_results")
 
     for model_dir in model_dirs:
         if not model_dir.exists():

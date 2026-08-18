@@ -53,7 +53,7 @@ from graph_dataset import Panel_GraphDataset, features_GraphDataset
 from imagining_alghoritm import P_AE, U, WCPDI
 from config import (
     BASE_PANELS, TEST_PANEL, BETA_CONSTANT, BETAS, BO_SEARCH_RESULTS_DIR, DAMAGE_POINTS, FREQ_FOR_BETA_SWEEP,
-    FREQUENCY_MAPPING, GRAPH_DATA_DIR, PANEL_W, PANEL_H, PROJECT_ROOT, GCN_TYPES, MODEL_TYPES, TYPES_LABELS, PANELS, DAMAGE_MAP_N_PIXELS, COMPARE_OUT_DIR,
+    FREQUENCY_MAPPING, GRAPH_DATA_DIR, PANEL_W, PANEL_H, PROJECT_ROOT, AE_RESULTS_DIR, GCN_TYPES, MODEL_TYPES, TYPES_LABELS, PANELS, DAMAGE_MAP_N_PIXELS, COMPARE_OUT_DIR,
     _LINESTYLES, CUSTOM_PALETTE as PALETTE, COMPARE_OUT_DIR, LIFETIME_FRACTIONS
 )
 
@@ -142,7 +142,7 @@ def _load_path_ae_out(panel_number, freq):
     '''(n_states, N_PATHS) ensemble-fold sHI curves for the per-path AE, read straight
     from path_performance_results/sHI.pkl (sHI[fold][freq][panel][path] -- already
     cached at every state for the ensemble fold by path_performance.py).'''
-    sHI_path = PROJECT_ROOT / "path_performance_results" / "sHI.pkl"
+    sHI_path = AE_RESULTS_DIR / "sHI.pkl"
     if not sHI_path.exists():
         raise FileNotFoundError(f"{sHI_path} not found -- run path_performance.py first")
     with open(sHI_path, "rb") as f:

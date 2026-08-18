@@ -31,10 +31,10 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 import pandas as pd
 
-from config import PROJECT_ROOT, CUSTOM_PALETTE
+from config import PROJECT_ROOT, TEST_RUN_DIR, CUSTOM_PALETTE
 
 FOLDERS = [f"Multi_path_BO_fixed_freq{freq}" for freq in range(0, 6)]
-OUT_DIR = PROJECT_ROOT / "AE_hyperparameters_summary_results"
+OUT_DIR = TEST_RUN_DIR / "AE_hyperparameters_summary_results"
 
 _MARKERS = ["o", "s", "^", "D"]
 
@@ -53,7 +53,7 @@ HP_PLOTS = [
 ]
 
 
-def load_all_databases(folders=FOLDERS, root=PROJECT_ROOT):
+def load_all_databases(folders=FOLDERS, root=TEST_RUN_DIR):
     '''Concatenates every folder's model_database.xlsx into one DataFrame, tagging
     each row with its source folder'''
     frames = []

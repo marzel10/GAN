@@ -45,11 +45,11 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 import pandas as pd
 
-from config import BO_SEARCH_RESULTS_DIR, PROJECT_ROOT
+from config import BO_SEARCH_RESULTS_DIR, PROJECT_ROOT, TEST_RUN_DIR
 
 FREQS = range(0, 6)
 FOLDERS = [f"Bayesian_GCN_freq{freq}" for freq in FREQS]
-OUT_DIR = PROJECT_ROOT / "GCN_hyperparameters_summary_results"
+OUT_DIR = TEST_RUN_DIR / "GCN_hyperparameters_summary_results"
 
 # (key, plot title / y-axis label)
 HP_PLOTS = [

@@ -4,7 +4,7 @@ import time
 import numpy as np
 
 from BO_GCN import run_bayesian_optimization
-from config import PROJECT_ROOT, BETA_CONSTANT, FREQUENCY_MAPPING, TYPES, FREQ_FOR_BETA_SWEEP, BETAS, OPTIMIZED_TYPES, OPTIMIZE_RAW
+from config import TEST_RUN_DIR, BETA_CONSTANT, FREQUENCY_MAPPING, TYPES, FREQ_FOR_BETA_SWEEP, BETAS, OPTIMIZED_TYPES, OPTIMIZE_RAW
 from graph_performance import main as graph_performance_main
 from graph_performance_beta_sweep import main as graph_performance_beta_sweep_main
 from Fitness_summary import main as metrics_summary_main
@@ -47,7 +47,7 @@ def run_by_area_beta_sweep(freq):
         print(f"beta={beta} took {t_end - t_begin:.2f}s")
 
     folders = [f"Bayesian_GCN_by_area_freq{freq}{_beta_suffix(beta)}" for beta in BETAS]
-    out_dir = PROJECT_ROOT / "graph_performance_results_by_area_beta_sweep"
+    out_dir = TEST_RUN_DIR / "graph_performance_results_by_area_beta_sweep"
     graph_performance_beta_sweep_main(recompute=True, folders=folders, out_dir=out_dir)
 
 
@@ -71,9 +71,9 @@ def main():
 
 
         if type == 'without_map_loss':
-            out_dir = PROJECT_ROOT / f"graph_performance_results_wml"
+            out_dir = TEST_RUN_DIR / f"graph_performance_results_wml"
         else:
-            out_dir = PROJECT_ROOT / f"graph_performance_results_{type}"
+            out_dir = TEST_RUN_DIR / f"graph_performance_results_{type}"
 
         # Generate a performance summary for this type across all frequencies
         graph_performance_main(recompute=True, folders=folders, out_dir=out_dir)
@@ -89,7 +89,7 @@ def main():
         print(f"Time for raw features freq={freq}: {t_end - t_begin:.2f}s\n")
 
     folders = [f"Bayesian_GCN_raw_freq{freq}" for freq in freqs]
-    out_dir = PROJECT_ROOT / "graph_performance_results_raw"
+    out_dir = TEST_RUN_DIR / "graph_performance_results_raw"
     graph_performance_main(recompute=True, folders=folders, out_dir=out_dir, raw_features=True)
 
     WAE_main()              # compute weighted average metrics

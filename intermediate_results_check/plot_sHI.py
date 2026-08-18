@@ -17,7 +17,7 @@ import tensorflow as tf
 from ae_cross_validation_helper import ClipLayer, plot_ensemble_sHI
 from CNN_AE import KSparse, ExpandLastDim, SqueezeLastDim
 from create_datastores import prepare_datastores
-from config import DEFAULT_FREQ_INDEX, ALL_BASE_PANELS
+from config import DEFAULT_FREQ_INDEX, ALL_BASE_PANELS, CROSS_VALIDATION_RESULTS_AE_DIR
 from AE_train import monotonicity_loss
 
 path_i = 0
@@ -25,7 +25,7 @@ freq_i = DEFAULT_FREQ_INDEX
 panel_number = "105"  # panel to plot sHI for
 
 # Load the saved ensemble model for the specified path
-model_path = _PROJECT_ROOT / "Cross_Validation_Results_AE" / f"path_{path_i}" / "ensemble_model.keras"
+model_path = CROSS_VALIDATION_RESULTS_AE_DIR / f"path_{path_i}" / "ensemble_model.keras"
 custom_objects = {
     "KSparse": KSparse,
     "ExpandLastDim": ExpandLastDim,

@@ -80,7 +80,7 @@ from create_datastores import prepare_datastores
 from prognostic_criteria import monotonicity_criterion, trendability_criterion, prognosability_criterion
 from config import (
     K_SPARSE_PENALTY_WEIGHT, CV_PANELS,
-    BO_RESULTS_DIR, BO_TUNER_DIR, BO_SEARCH_RESULTS_DIR,
+    BO_RESULTS_DIR, BO_TUNER_DIR, BO_SEARCH_RESULTS_DIR, TEST_RUN_DIR,
     DEFAULT_N_FEATURES, TEST_PANEL, EPOCHS_PER_FOLD_AE, CNN_FIXED_LATENT_DIM, LR, MAX_TRIALS_AE,
 )
 
@@ -239,7 +239,6 @@ class MyTuner(kt.BayesianOptimization):
                 test_ds_names=TEST_PANEL,
                 include_benchmark=self.benchmark,
                 diff_bench=self.diff_bench,
-                features=True,
             )
 
             log_mem(f"trial {trial.trial_id} fold {fold_idx} after prep")
@@ -668,7 +667,7 @@ def main():
     
 
     for FREQ_I in range(0, 6):
-        folder_name = f"Multi_path_BO_fixed_freq{FREQ_I}"
+        folder_name = str(TEST_RUN_DIR / f"Multi_path_BO_fixed_freq{FREQ_I}")
         ctx = multiprocessing.get_context("spawn")
         for PATH_I in range(0, 28):
             log_mem(f"before path {PATH_I} (parent)")

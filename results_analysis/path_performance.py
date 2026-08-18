@@ -45,7 +45,7 @@ from CNN_AE import KSparse, ExpandLastDim, SqueezeLastDim
 from AE_train import monotonicity_loss
 from create_datastores import prepare_datastores
 from prognostic_criteria import monotonicity_criterion, trendability_criterion, prognosability_criterion
-from config import BASE_PANELS, TEST_PANEL, DEFAULT_N_PIXELS, FREQUENCY_MAPPING, LIFETIME_FRACTIONS, METRIC_NAMES, FOLD_KEYS, AE_RESULTS_DIR
+from config import BASE_PANELS, TEST_PANEL, TEST_RUN_DIR, DEFAULT_N_PIXELS, FREQUENCY_MAPPING, LIFETIME_FRACTIONS, METRIC_NAMES, FOLD_KEYS, AE_RESULTS_DIR
 
 
 BO_folders = [f"Multi_path_BO_fixed_freq{i}" for i in range(6)]
@@ -95,7 +95,7 @@ def compute_sHI_and_metrics():
     for freq_idx, folder in enumerate(BO_folders):
         freq_i = freq_idx
         for path_i in range(N_PATHS):
-            path_dir = _PROJECT_ROOT / folder / f"Bayesian_CNN_AE_path{path_i}"
+            path_dir = TEST_RUN_DIR / folder / f"Bayesian_CNN_AE_path{path_i}"
             if not path_dir.exists():
                 print(f"[{folder}] path {path_i}: not trained yet, skipping")
                 continue
@@ -306,11 +306,11 @@ def plot_sHI_grid(sHI, out_dir=OUT_DIR, weights=None):
     for ax in axes[-1, :]:
         ax.set_xlabel("Life fraction")
     handles, labels = axes[0, -1].get_legend_handles_labels()
-    fig.legend(handles, labels, fontsize=7, loc="lower center",
-               bbox_to_anchor=(0.5, 0.0), ncol=len(PANELS))
+    fig.legend(handles, labels, fontsize=12, loc="lower center",
+               bbox_to_anchor=(0.5, 0.01), ncol=len(PANELS))
 
     #fig.suptitle("sHI vs life fraction, averaged over paths (one line per panel)")
-    fig.tight_layout(rect=[0, 0.04, 1, 1])
+    fig.tight_layout(rect=[0, 0.025, 1, 1])
     save_path = out_dir / "sHI_grid.svg"
     fig.savefig(save_path)
     plt.close(fig)

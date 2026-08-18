@@ -23,9 +23,9 @@ from CNN_AE import ExpandLastDim, KSparse, SqueezeLastDim
 from ae_cross_validation_helper import ClipLayer, _CompatHeNormal
 from AE_train import monotonicity_loss
 from create_datastores import prepare_simple_dataset
-from config import VALIDATION_PANEL_MAP, GRAPH_DATA_DIR, ALL_BASE_PANELS
+from config import VALIDATION_PANEL_MAP, GRAPH_DATA_DIR, ALL_BASE_PANELS, TEST_RUN_DIR
 
-def extract_shi(folders, freq, dataset, GAN_dir=str(_PROJECT_ROOT)):
+def extract_shi(folders, freq, dataset, GAN_dir=str(TEST_RUN_DIR)):
     '''
     Extract sHI values from the trained autoencoder models for a given dataset and frequency.
     inputs:
